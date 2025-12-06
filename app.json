@@ -1,0 +1,54 @@
+{
+  "expo": {
+    "name": "ExpertMentor",
+    "slug": "expert-mentor",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.svg",
+    "scheme": "myapp",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "web": {
+      "bundler": "metro",
+      "output": "server"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "expo-web-browser",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow ExpertMentor to access your camera for QR scanning and video calls."
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Allow ExpertMentor to access your microphone for voice calls.",
+          "cameraPermission": "Allow ExpertMentor to access your camera for video calls."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "android": {
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE"
+      ]
+    },
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "This app needs access to camera for QR scanning and video calls.",
+        "NSMicrophoneUsageDescription": "This app needs access to microphone for voice calls.",
+        "NSLocalNetworkUsageDescription": "This app needs access to local network for development."
+      }
+    }
+  }
+}
