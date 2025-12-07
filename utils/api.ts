@@ -461,4 +461,96 @@ export const api = {
 
     return unsubscribe;
   },
+
+  async getUnreadMessageCount(userId: string): Promise<number> {
+    try {
+      const sessionsRef = collection(db, 'chat_sessions');
+      const userChatsQuery = query(
+        sessionsRef,
+        where('isActive', '==', true)
+      );
+
+      const sessionsSnapshot = await getDocs(userChatsQuery);
+      let totalUnreadCount = 0;
+
+      for (const sessionDoc of sessionsSnapshot.docs) {
+        const sessionData = sessionDoc.data();
+        const { user1Id, user2Id } = sessionData;
+
+        // Check if current user is part of this session
+        if (user1Id !== userId && user2Id !== userId) continue;
+
+        const messagesRef = collection(db, 'chat_sessions', sessionDoc.id, 'messages');
+        const unreadQuery = query(
+          messagesRef,
+          where('recipientId', '==', userId),
+          where('isRead', '==', false)
+        );
+
+        const messagesSnapshot = await getDocs(unreadQuery);
+        totalUnreadCount += messagesSnapshot.size;
+      }
+
+      return totalUnreadCount;
+    } catch (error: any) {
+      console.error('Error getting unread message count:', error);
+      return 0;
+    }
+  },
+
+  subscribeToUnreadMessages(userId: string, callback: (count: number) => void): () => void {
+    const sessionsRef = collection(db, 'chat_sessions');
+    const userChatsQuery = query(sessionsRef);
+
+    const unsubscribe = onSnapshot(userChatsQuery, async (sessionsSnapshot) => {
+      let totalUnreadCount = 0;
+
+      for (const sessionDoc of sessionsSnapshot.docs) {
+        const sessionData = sessionDoc.data();
+        const { user1Id, user2Id } = sessionData;
+
+        // Check if current user is part of this session
+        if (user1Id !== userId && user2Id !== userId) continue;
+
+        const messagesRef = collection(db, 'chat_sessions', sessionDoc.id, 'messages');
+        const unreadQuery = query(
+          messagesRef,
+          where('recipientId', '==', userId),
+          where('isRead', '==', false)
+        );
+
+        const messagesSnapshot = await getDocs(unreadQuery);
+        totalUnreadCount += messagesSnapshot.size;
+      }
+
+      callback(totalUnreadCount);
+    }, (error) => {
+      console.warn('Error in unread messages subscription:', error?.message);
+      callback(0);
+    });
+
+    return unsubscribe;
+  },
+
+  async markChatMessagesAsRead(sessionId: string, userId: string): Promise<{ success: boolean }> {
+    try {
+      const messagesRef = collection(db, 'chat_sessions', sessionId, 'messages');
+      const unreadQuery = query(
+        messagesRef,
+        where('recipientId', '==', userId),
+        where('isRead', '==', false)
+      );
+
+      const messagesSnapshot = await getDocs(unreadQuery);
+      const updatePromises = messagesSnapshot.docs.map((docSnap) =>
+        updateDoc(doc(db, 'chat_sessions', sessionId, 'messages', docSnap.id), { isRead: true })
+      );
+
+      await Promise.all(updatePromises);
+      return { success: true };
+    } catch (error: any) {
+      console.error('Error marking messages as read:', error);
+      return { success: false };
+    }
+  },
 };

@@ -2,11 +2,12 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { Mail, ArrowRight } from 'lucide-react-native';
+import { Mail, ArrowRight, Loader } from 'lucide-react-native';
 import { auth, db } from '../../config/firebase';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { storage, StorageKeys } from '../../utils/storage';
+import { signInWithGoogle, handleGoogleAuthSuccess } from '../../utils/googleAuth';
 
 type AuthMethod = 'initial' | 'email';
 
@@ -15,6 +16,7 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [error, setError] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
 
@@ -74,6 +76,39 @@ export default function LoginScreen() {
     }
   };
 
+  const handleGoogleLogin = async () => {
+    setIsGoogleLoading(true);
+    setError('');
+
+    try {
+      console.log('[Login] Starting Google Sign-In...');
+      const result = await signInWithGoogle();
+
+      if (result.success && result.user) {
+        console.log('[Login] Google auth successful, handling profile...');
+        // Determine user type - for now, default to client, can be changed in profile
+        const authResult = await handleGoogleAuthSuccess(result.user, 'client');
+
+        if (authResult.success) {
+          console.log('[Login] User profile created/updated, navigating to user-type-selection');
+          router.replace('/(auth)/user-type-selection');
+        } else {
+          setError(authResult.error || 'Failed to create user profile');
+          console.error('[Login] Profile creation failed:', authResult.error);
+        }
+      } else {
+        setError(result.error || 'Google Sign-In failed');
+        console.error('[Login] Google Sign-In failed:', result.error);
+      }
+    } catch (err: any) {
+      const errorMessage = err.message || 'Google Sign-In failed';
+      setError(errorMessage);
+      console.error('[Login] Google Sign-In error:', err);
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  };
+
   const handleSuccessfulAuth = async (userId: string, userEmail: string) => {
     try {
       console.log('[Login] Checking profile in Firestore...');
@@ -116,6 +151,22 @@ export default function LoginScreen() {
       <View style={styles.authOptions}>
         <TouchableOpacity
           style={styles.authButton}
+          onPress={handleGoogleLogin}
+          disabled={isGoogleLoading}
+        >
+          {isGoogleLoading ? (
+            <ActivityIndicator size="small" color="#EA4335" />
+          ) : (
+            <Text style={styles.googleIcon}>G</Text>
+          )}
+          <Text style={styles.authButtonText}>
+            {isGoogleLoading ? 'Signing in...' : 'Continue with Gmail'}
+          </Text>
+          <ArrowRight size={20} color="#6B7280" />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.authButton}
           onPress={() => setAuthMethod('email')}
         >
           <Mail size={24} color="#2563EB" />
@@ -123,6 +174,8 @@ export default function LoginScreen() {
           <ArrowRight size={20} color="#6B7280" />
         </TouchableOpacity>
       </View>
+
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
       <View style={styles.footer}>
         <Text style={styles.footerText}>
@@ -321,6 +374,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E5E7EB',
     gap: 16,
+  },
+  googleIcon: {
+    fontSize: 20,
+    fontFamily: 'Inter-Bold',
+    width: 24,
+    textAlign: 'center',
+    color: '#EA4335',
   },
   authButtonText: {
     flex: 1,

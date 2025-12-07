@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Image, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Image, ActivityIndicator, SectionList } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { ArrowLeft, MessageCircle } from 'lucide-react-native';
+import { ArrowLeft, MessageCircle, Phone, CheckCircle, Clock, DollarSign, Star, User } from 'lucide-react-native';
 import { db } from '../config/firebase';
-import { collection, onSnapshot, getDoc, doc, getDocs, query, orderBy } from 'firebase/firestore';
+import { collection, onSnapshot, getDoc, doc, getDocs, query, orderBy, where } from 'firebase/firestore';
 import { storage, StorageKeys } from '../utils/storage';
 import { ensureMediaUrl } from '../utils/firebaseStorageUrl';
 
@@ -20,9 +20,25 @@ interface ChatSession {
   messageCount?: number;
 }
 
+interface ScheduledSession {
+  id: string;
+  clientId: string;
+  clientName: string;
+  clientImage?: string;
+  type: 'chat' | 'call';
+  status: 'scheduled' | 'active' | 'completed' | 'cancelled';
+  duration: number;
+  cost: number;
+  rating?: number;
+  scheduledAt?: any;
+  completedAt?: any;
+}
+
 export default function MySessionsScreen() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [scheduledSessions, setScheduledSessions] = useState<ScheduledSession[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [userProfile, setUserProfile] = useState<any>(null);
 
   const loadUserAndSessions = async () => {
     try {
@@ -34,96 +50,153 @@ export default function MySessionsScreen() {
         return;
       }
 
-      console.log('[MySessions] Loading sessions for user:', profileData.id);
-      const sessionsRef = collection(db, 'chat_sessions');
-      
-      const unsubscribe = onSnapshot(sessionsRef, async (snapshot) => {
-        console.log('[MySessions] Snapshot received:', snapshot.size, 'total sessions');
-        const activeSessions: ChatSession[] = [];
+      setUserProfile(profileData);
 
-        for (const docSnap of snapshot.docs) {
-          const sessionData = docSnap.data();
-          const { user1Id, user2Id, createdAt, lastMessageAt } = sessionData;
+      // Load chat sessions if user is not an expert
+      if (profileData.userType !== 'expert') {
+        console.log('[MySessions] Loading chat sessions for user:', profileData.id);
+        const sessionsRef = collection(db, 'chat_sessions');
+        
+        const unsubscribe = onSnapshot(sessionsRef, async (snapshot) => {
+          console.log('[MySessions] Snapshot received:', snapshot.size, 'total sessions');
+          const activeSessions: ChatSession[] = [];
 
-          // Check if current user is part of this session
-          if (user1Id !== profileData.id && user2Id !== profileData.id) {
-            continue;
-          }
+          for (const docSnap of snapshot.docs) {
+            const sessionData = docSnap.data();
+            const { user1Id, user2Id, createdAt, lastMessageAt } = sessionData;
 
-          console.log('[MySessions] Processing session:', docSnap.id);
-
-          const otherUserId = user1Id === profileData.id ? user2Id : user1Id;
-
-          try {
-            const otherUserRef = doc(db, 'profiles', otherUserId);
-            const otherUserSnap = await getDoc(otherUserRef);
-
-            if (otherUserSnap.exists()) {
-              const otherUserData = otherUserSnap.data();
-              
-              // Get last message
-              const messagesRef = collection(db, 'chat_sessions', docSnap.id, 'messages');
-              const messagesQuery = query(messagesRef, orderBy('timestamp', 'desc'));
-              
-              try {
-                const messagesSnap = await getDocs(messagesQuery);
-                let lastMessage = '';
-                let lastTime = lastMessageAt;
-                const messageCount = messagesSnap.docs.length;
-
-                if (messagesSnap.docs.length > 0) {
-                  const lastMsg = messagesSnap.docs[0].data();
-                  lastMessage = lastMsg.text?.substring(0, 50) || '';
-                  lastTime = lastMsg.timestamp || lastMessageAt;
-                }
-
-                activeSessions.push({
-                  id: docSnap.id,
-                  user1Id,
-                  user2Id,
-                  otherUserId,
-                  otherUserName: otherUserData.name || 'Unknown',
-                  otherUserImage: ensureMediaUrl(otherUserData.avatarUrl),
-                  lastMessage: lastMessage || 'No messages yet',
-                  lastMessageAt: lastTime,
-                  createdAt,
-                  messageCount
-                });
-              } catch (msgErr) {
-                console.log('[MySessions] No messages in session yet');
-                activeSessions.push({
-                  id: docSnap.id,
-                  user1Id,
-                  user2Id,
-                  otherUserId,
-                  otherUserName: otherUserData.name || 'Unknown',
-                  otherUserImage: ensureMediaUrl(otherUserData.avatarUrl),
-                  lastMessage: 'No messages yet',
-                  lastMessageAt,
-                  createdAt,
-                  messageCount: 0
-                });
-              }
+            // Check if current user is part of this session
+            if (user1Id !== profileData.id && user2Id !== profileData.id) {
+              continue;
             }
-          } catch (err) {
-            console.error('[MySessions] Error fetching user profile:', err);
-          }
-        }
 
-        console.log('[MySessions] ✓ Loaded', activeSessions.length, 'sessions');
-        setSessions(activeSessions.sort((a, b) => {
-          const timeA = a.lastMessageAt?.toDate?.() || new Date(a.lastMessageAt || 0);
-          const timeB = b.lastMessageAt?.toDate?.() || new Date(b.lastMessageAt || 0);
-          return timeB.getTime() - timeA.getTime();
-        }));
-        setIsLoading(false);
-      }, (error: any) => {
-        console.error('[MySessions] ✗ Listener error:', error?.code || error?.message || error);
-        setIsLoading(false);
-      });
+            console.log('[MySessions] Processing session:', docSnap.id);
+
+            const otherUserId = user1Id === profileData.id ? user2Id : user1Id;
+
+            try {
+              const otherUserRef = doc(db, 'profiles', otherUserId);
+              const otherUserSnap = await getDoc(otherUserRef);
+
+              if (otherUserSnap.exists()) {
+                const otherUserData = otherUserSnap.data();
+                
+                // Get last message
+                const messagesRef = collection(db, 'chat_sessions', docSnap.id, 'messages');
+                const messagesQuery = query(messagesRef, orderBy('timestamp', 'desc'));
+                
+                try {
+                  const messagesSnap = await getDocs(messagesQuery);
+                  let lastMessage = '';
+                  let lastTime = lastMessageAt;
+                  const messageCount = messagesSnap.docs.length;
+
+                  if (messagesSnap.docs.length > 0) {
+                    const lastMsg = messagesSnap.docs[0].data();
+                    lastMessage = lastMsg.text?.substring(0, 50) || '';
+                    lastTime = lastMsg.timestamp || lastMessageAt;
+                  }
+
+                  activeSessions.push({
+                    id: docSnap.id,
+                    user1Id,
+                    user2Id,
+                    otherUserId,
+                    otherUserName: otherUserData.name || 'Unknown',
+                    otherUserImage: ensureMediaUrl(otherUserData.avatarUrl),
+                    lastMessage: lastMessage || 'No messages yet',
+                    lastMessageAt: lastTime,
+                    createdAt,
+                    messageCount
+                  });
+                } catch (msgErr) {
+                  console.log('[MySessions] No messages in session yet');
+                  activeSessions.push({
+                    id: docSnap.id,
+                    user1Id,
+                    user2Id,
+                    otherUserId,
+                    otherUserName: otherUserData.name || 'Unknown',
+                    otherUserImage: ensureMediaUrl(otherUserData.avatarUrl),
+                    lastMessage: 'No messages yet',
+                    lastMessageAt,
+                    createdAt,
+                    messageCount: 0
+                  });
+                }
+              }
+            } catch (err) {
+              console.error('[MySessions] Error fetching user profile:', err);
+            }
+          }
+
+          console.log('[MySessions] ✓ Loaded', activeSessions.length, 'sessions');
+          setSessions(activeSessions.sort((a, b) => {
+            const timeA = a.lastMessageAt?.toDate?.() || new Date(a.lastMessageAt || 0);
+            const timeB = b.lastMessageAt?.toDate?.() || new Date(b.lastMessageAt || 0);
+            return timeB.getTime() - timeA.getTime();
+          }));
+        }, (error: any) => {
+          console.error('[MySessions] ✗ Listener error:', error?.code || error?.message || error);
+        });
+
+        return () => unsubscribe();
+      } else {
+        // Load expert sessions
+        loadExpertSessions(profileData.id);
+      }
+      
+      setIsLoading(false);
     } catch (error) {
       console.error('[MySessions] ✗ Error loading sessions:', error);
       setIsLoading(false);
+    }
+  };
+
+  const loadExpertSessions = async (expertId: string) => {
+    try {
+      const sessionsRef = collection(db, 'sessions');
+      const q = query(sessionsRef, where('expertId', '==', expertId), orderBy('scheduledAt', 'desc'));
+      
+      const unsubscribe = onSnapshot(q, async (snapshot) => {
+        const expert_sessions: ScheduledSession[] = [];
+
+        for (const docSnap of snapshot.docs) {
+          const sessionData = docSnap.data();
+          
+          try {
+            const clientRef = doc(db, 'profiles', sessionData.clientId);
+            const clientSnap = await getDoc(clientRef);
+
+            if (clientSnap.exists()) {
+              const clientData = clientSnap.data();
+              expert_sessions.push({
+                id: docSnap.id,
+                clientId: sessionData.clientId,
+                clientName: clientData.name || 'Unknown',
+                clientImage: ensureMediaUrl(clientData.avatarUrl),
+                type: sessionData.type || 'chat',
+                status: sessionData.status || 'scheduled',
+                duration: sessionData.duration || 0,
+                cost: sessionData.cost || 0,
+                rating: sessionData.rating,
+                scheduledAt: sessionData.scheduledAt,
+                completedAt: sessionData.completedAt
+              });
+            }
+          } catch (err) {
+            console.error('[MySessions] Error fetching client profile:', err);
+          }
+        }
+
+        setScheduledSessions(expert_sessions);
+      }, (error: any) => {
+        console.error('[MySessions] ✗ Expert listener error:', error);
+      });
+
+      return () => unsubscribe();
+    } catch (error) {
+      console.error('[MySessions] Error loading expert sessions:', error);
     }
   };
 
@@ -150,6 +223,46 @@ export default function MySessionsScreen() {
     }
   };
 
+  const formatDate = (timestamp: any) => {
+    if (!timestamp) return '';
+    try {
+      const date = timestamp.toDate?.() || new Date(timestamp);
+      return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return '';
+    }
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'completed':
+        return '#059669';
+      case 'active':
+        return '#2563EB';
+      case 'scheduled':
+        return '#F59E0B';
+      case 'cancelled':
+        return '#DC2626';
+      default:
+        return '#6B7280';
+    }
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'completed':
+        return '✓';
+      case 'active':
+        return '●';
+      case 'scheduled':
+        return '⏱';
+      case 'cancelled':
+        return '✗';
+      default:
+        return '○';
+    }
+  };
+
   const openChat = (session: ChatSession) => {
     router.push({
       pathname: '/chat/[expertId]',
@@ -166,12 +279,95 @@ export default function MySessionsScreen() {
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#2563EB" />
-          <Text style={styles.loadingText}>Loading chats...</Text>
+          <Text style={styles.loadingText}>Loading sessions...</Text>
         </View>
       </SafeAreaView>
     );
   }
 
+  // Render expert sessions view
+  if (userProfile?.userType === 'expert') {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()}>
+            <ArrowLeft size={24} color="#1F2937" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>My Sessions</Text>
+          <View style={styles.headerSpacer} />
+        </View>
+
+        <ScrollView showsVerticalScrollIndicator={false}>
+          {scheduledSessions.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Clock size={48} color="#D1D5DB" />
+              <Text style={styles.emptyText}>No sessions yet</Text>
+              <Text style={styles.emptySubtext}>Your scheduled sessions will appear here</Text>
+            </View>
+          ) : (
+            <View style={styles.sessionsContainer}>
+              {scheduledSessions.map((session) => (
+                <View key={session.id} style={styles.expertSessionCard}>
+                  <View style={styles.sessionHeader}>
+                    <Image
+                      source={{
+                        uri: session.clientImage || 'https://images.pexels.com/photos/3778603/pexels-photo-3778603.jpeg?auto=compress&cs=tinysrgb&w=400'
+                      }}
+                      style={styles.clientAvatar}
+                    />
+                    
+                    <View style={styles.clientInfo}>
+                      <View style={styles.clientNameRow}>
+                        <Text style={styles.clientName}>{session.clientName}</Text>
+                        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(session.status) }]}>
+                          <Text style={styles.statusText}>{getStatusIcon(session.status)} {session.status}</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.sessionType}>
+                        {session.type === 'chat' ? '💬 Chat' : '📞 Call'} • {session.duration} min
+                      </Text>
+                      <Text style={styles.sessionDate}>{formatDate(session.scheduledAt)}</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.sessionDetails}>
+                    <View style={styles.detailItem}>
+                      <DollarSign size={16} color="#059669" />
+                      <Text style={styles.detailLabel}>Earnings</Text>
+                      <Text style={styles.detailValue}>₹{session.cost}</Text>
+                    </View>
+                    
+                    {session.rating && (
+                      <View style={styles.detailItem}>
+                        <Star size={16} color="#F59E0B" />
+                        <Text style={styles.detailLabel}>Rating</Text>
+                        <Text style={styles.detailValue}>{session.rating.toFixed(1)}</Text>
+                      </View>
+                    )}
+                    
+                    <View style={styles.detailItem}>
+                      <Clock size={16} color="#2563EB" />
+                      <Text style={styles.detailLabel}>Duration</Text>
+                      <Text style={styles.detailValue}>{session.duration} min</Text>
+                    </View>
+                  </View>
+
+                  {session.status === 'active' && (
+                    <TouchableOpacity style={styles.joinButton}>
+                      <Phone size={16} color="#FFFFFF" />
+                      <Text style={styles.joinButtonText}>Continue Session</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))}
+            </View>
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  // Render client chat sessions view
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -278,6 +474,106 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 14,
     color: '#9CA3AF'
+  },
+  sessionsContainer: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  expertSessionCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 14,
+    marginVertical: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#2563EB',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  sessionHeader: {
+    flexDirection: 'row',
+    marginBottom: 12,
+  },
+  clientAvatar: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    marginRight: 12,
+    backgroundColor: '#E5E7EB'
+  },
+  clientInfo: {
+    flex: 1,
+  },
+  clientNameRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  clientName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  statusText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  sessionType: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginBottom: 2,
+  },
+  sessionDate: {
+    fontSize: 11,
+    color: '#9CA3AF',
+  },
+  sessionDetails: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginVertical: 12,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderTopColor: '#E5E7EB',
+    borderBottomColor: '#E5E7EB',
+  },
+  detailItem: {
+    alignItems: 'center',
+    gap: 4,
+  },
+  detailLabel: {
+    fontSize: 11,
+    color: '#6B7280',
+  },
+  detailValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  joinButton: {
+    flexDirection: 'row',
+    backgroundColor: '#059669',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 12,
+  },
+  joinButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
   sessionCard: {
     flexDirection: 'row',

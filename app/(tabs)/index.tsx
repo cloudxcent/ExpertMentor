@@ -269,7 +269,7 @@ export default function HomeScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.actionButton}
-              onPress={() => router.push('/sessions')}
+              onPress={() => router.push('/my-sessions')}
             >
               <Clock size={20} color="#059669" />
               <Text style={styles.actionButtonText}>My Sessions</Text>
@@ -286,7 +286,7 @@ export default function HomeScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.actionButton}
-              onPress={() => router.push('/(tabs)/profile')}
+              onPress={() => router.push('/analytics')}
             >
               <TrendingUp size={20} color="#7C3AED" />
               <Text style={styles.actionButtonText}>Analytics</Text>

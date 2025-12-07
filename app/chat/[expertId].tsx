@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Image, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Image, KeyboardAvoidingView, Platform, ActivityIndicator, Modal, FlatList } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Send, Phone, Video, MoreVertical, Wallet, Plus } from 'lucide-react-native';
+import { ArrowLeft, Send, Phone, Video, MoreVertical, Wallet, Plus, Smile, ImagePlus, X } from 'lucide-react-native';
 import { db, auth } from '../../config/firebase';
 import { collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, getDoc, doc, setDoc, getDocs } from 'firebase/firestore';
 import { storage, StorageKeys } from '../../utils/storage';
 import { ensureMediaUrl } from '../../utils/firebaseStorageUrl';
+import { createMessageNotification } from '../../utils/notifications';
+import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 
 interface Message {
   id: string;
@@ -16,7 +19,11 @@ interface Message {
   timestamp: any;
   createdAt: string;
   isRead: boolean;
+  imageUrl?: string;
+  mediaType?: 'image' | 'text';
 }
+
+const EMOJIS = ['😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '☺️', '😊', '😇', '🙂', '🙃', '😉', '😌', '😍', '🥰', '😘', '😗', '😚', '😙', '😋', '😛', '😜', '🤪', '😎', '🤓', '🧐', '😕', '😟', '🙁', '☹️', '😲', '😳', '😦', '😧', '😨', '😰', '😥', '😢', '😭', '😱', '😖', '😣', '😞', '😓', '😩', '😫', '🥱', '😤', '😡', '😠', '🤬', '😈', '👿', '💀', '☠️', '💩', '🤡', '👋', '🤚', '🖐️', '✋', '🖖', '👌', '🤌', '🤏', '✌️', '🤞', '👍', '👎', '✊', '👊', '🤛', '🤜', '👏', '🙌', '👐', '🤲', '🤝', '💅', '💪', '👂', '👃', '🧠', '🦷', '⚽', '🏀', '🏈', '⚾', '🎾', '🏐', '🏉', '🎳', '🏓', '🏸', '🏒', '🏑', '🥍', '🏏', '⛳', '🎣', '🎯', '🎮', '🎲', '🎰', '🎪', '🎨', '🎬', '🎤', '🎧', '🎼', '🎹', '🥁', '🎷', '🎺', '🎸', '🎻', '🍏', '🍎', '🍐', '🍊', '🍋', '🍌', '🍉', '🍇', '🍓', '🍈', '🍒', '🍑', '🥭', '🍍', '🥥', '🥝', '🍅', '🍆', '🥑', '🍞', '🥐', '🥯', '🍠', '🥔', '🍟', '🍗', '🍖', '🌭', '🍔', '🍕', '🥪', '🥙', '🌮', '🌯', '🥗', '🥘', '🍝', '🍜', '🍲', '🍛', '🍣', '🍱', '🥟', '🍤', '🍙', '🍚', '🍘', '🍥', '🍢', '🍡', '🍧', '🍨', '🍦', '🍰', '🎂', '🍮', '🍭', '🍬', '🍫', '🍿', '🍩', '🍪', '☕', '🍵', '🍶', '🍾', '🍷', '🍸', '🍹', '🍺', '🍻', '🥂'];
 
 export default function ChatScreen() {
   const { expertId, expertName, expertImage, chatRate } = useLocalSearchParams();
@@ -28,6 +35,8 @@ export default function ChatScreen() {
   const [currentUserName, setCurrentUserName] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [expertDetails, setExpertDetails] = useState<any>(null);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const scrollViewRef = useRef<ScrollView>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
@@ -106,7 +115,9 @@ export default function ChatScreen() {
             receiverId: data.receiverId || '',
             timestamp: data.timestamp,
             createdAt: data.createdAt || new Date().toISOString(),
-            isRead: data.isRead || false
+            isRead: data.isRead || false,
+            imageUrl: data.imageUrl,
+            mediaType: data.mediaType || 'text'
           });
         });
         
@@ -150,7 +161,9 @@ export default function ChatScreen() {
             receiverId: data.receiverId || '',
             timestamp: data.timestamp,
             createdAt: data.createdAt || new Date().toISOString(),
-            isRead: data.isRead || false
+            isRead: data.isRead || false,
+            imageUrl: data.imageUrl,
+            mediaType: data.mediaType || 'text'
           });
         });
 
@@ -174,51 +187,183 @@ export default function ChatScreen() {
     };
   }, [sessionId, currentUserId]);
 
-  const handleSendMessage = async () => {
-    if (!newMessage.trim() || !sessionId || !currentUserId || !expert) {
-      console.warn('[Chat] Cannot send - missing:', { 
-        message: !!newMessage.trim(), 
-        sessionId: !!sessionId, 
-        currentUserId: !!currentUserId, 
-        expert: !!expert 
+  const pickImage = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      
+      if (status !== 'granted') {
+        console.error('[Chat] Permission denied');
+        alert('Permission to access media library is required');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.4,
       });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const imageUri = result.assets[0].uri;
+        console.log('[Chat] Image selected:', imageUri);
+        
+        try {
+          // Convert image to base64
+          const response = await fetch(imageUri);
+          const blob = await response.blob();
+          const reader = new FileReader();
+          
+          reader.onloadend = () => {
+            const base64 = (reader.result as string).split(',')[1];
+            const dataUri = `data:image/jpeg;base64,${base64}`;
+            console.log('[Chat] Converted to base64, size:', dataUri.length);
+            setSelectedImage(dataUri);
+          };
+          
+          reader.onerror = () => {
+            console.error('[Chat] FileReader error');
+            setSelectedImage(imageUri);
+          };
+          
+          reader.readAsDataURL(blob);
+        } catch (error) {
+          console.error('[Chat] Error converting image:', error);
+          setSelectedImage(imageUri);
+        }
+      }
+    } catch (error) {
+      console.error('[Chat] Error picking image:', error);
+    }
+  };
+
+  const insertEmoji = (emoji: string) => {
+    setNewMessage(prev => prev + emoji);
+    // Keep emoji picker open
+  };
+
+  const handleSendMessage = async () => {
+    if (!newMessage.trim() && !selectedImage) {
       return;
     }
 
-    const messageText = newMessage.trim();
-    setNewMessage('');
+    if (!sessionId || !currentUserId) {
+      return;
+    }
+
     setIsSending(true);
 
     try {
-      console.log('[Chat] 📤 Sending message:', { 
-        sessionId, 
-        from: currentUserId, 
-        to: expert, 
-        text: messageText.substring(0, 30) 
-      });
+      const messageText = newMessage.trim();
+      
+      if (!messageText && !selectedImage) {
+        setIsSending(false);
+        return;
+      }
 
       const sessionRef = doc(db, 'chat_sessions', sessionId);
       const messagesRef = collection(sessionRef, 'messages');
 
-      const docRef = await addDoc(messagesRef, {
-        text: messageText,
+      const messageData: any = {
+        text: messageText || (selectedImage ? '📸 Image' : ''),
         senderId: currentUserId,
         senderName: currentUserName || 'User',
         receiverId: expert,
+        recipientId: expert, // Add recipientId for unread tracking
         timestamp: serverTimestamp(),
         createdAt: new Date().toISOString(),
-        isRead: false
-      });
+        isRead: false,
+        mediaType: selectedImage ? 'image' : 'text'
+      };
+
+      // Store image as base64 data URI if selected
+      if (selectedImage) {
+        messageData.imageUrl = selectedImage;
+      }
+
+      const docRef = await addDoc(messagesRef, messageData);
 
       console.log('[Chat] ✓ Message saved:', docRef.id);
 
       await setDoc(sessionRef, { lastMessageAt: serverTimestamp() }, { merge: true });
       console.log('[Chat] ✓ Session updated');
+
+      // Create notification for the recipient with unread count
+      try {
+        const recipientRef = doc(db, 'chat_sessions', sessionId, 'messages');
+        const unreadQuery = query(
+          recipientRef,
+          where('recipientId', '==', expert),
+          where('isRead', '==', false)
+        );
+        const unreadSnap = await getDocs(unreadQuery);
+        const unreadCount = unreadSnap.size;
+
+        await createMessageNotification(
+          expert,
+          currentUserId,
+          currentUserName || 'User',
+          messageText || '📸 Image',
+          unreadCount
+        );
+      } catch (notifError) {
+        console.warn('[Chat] ⚠ Failed to create notification:', notifError);
+        // Don't fail message send if notification fails
+      }
+
+      setNewMessage('');
+      setSelectedImage(null);
+      setShowEmojiPicker(false);
     } catch (error: any) {
       console.error('[Chat] ✗ Send error:', error?.code || error?.message || error);
-      setNewMessage(messageText);
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const downloadProfileImage = async () => {
+    try {
+      if (!expertDetails?.avatarUrl) {
+        alert('No profile image to download');
+        return;
+      }
+
+      const imageUrl = ensureMediaUrl(expertDetails.avatarUrl);
+      console.log('[Chat] Downloading profile image:', imageUrl);
+
+      const response = await fetch(imageUrl);
+      const blob = await response.blob();
+      
+      // Create a data URL from the blob
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64 = (reader.result as string).split(',')[1];
+        const fileName = `${expertName || 'profile'}_${Date.now()}.jpg`;
+        
+        // For web, trigger download
+        if (Platform.OS === 'web') {
+          const link = document.createElement('a');
+          link.href = `data:image/jpeg;base64,${base64}`;
+          link.download = fileName;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          console.log('[Chat] Profile image downloaded:', fileName);
+          alert(`Profile image saved as ${fileName}`);
+        } else {
+          // For mobile, save to local file system
+          const fileUri = `${FileSystem.documentDirectory}${fileName}`;
+          await FileSystem.writeAsStringAsync(fileUri, base64, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+          console.log('[Chat] Profile image saved to:', fileUri);
+          alert(`Profile image saved to Downloads`);
+        }
+      };
+      reader.readAsDataURL(blob);
+    } catch (error) {
+      console.error('[Chat] Download error:', error);
+      alert('Failed to download profile image');
     }
   };
 
@@ -288,10 +433,12 @@ export default function ChatScreen() {
 
         <View style={styles.expertInfo}>
           {expertDetails?.avatarUrl && (
-            <Image
-              source={{ uri: ensureMediaUrl(expertDetails.avatarUrl) }}
-              style={styles.expertImage}
-            />
+            <TouchableOpacity onPress={downloadProfileImage}>
+              <Image
+                source={{ uri: ensureMediaUrl(expertDetails.avatarUrl) }}
+                style={styles.expertImage}
+              />
+            </TouchableOpacity>
           )}
           <View>
             <Text style={styles.expertName}>{expertName || expertDetails?.name || 'Expert'}</Text>
@@ -341,7 +488,7 @@ export default function ChatScreen() {
 
       {/* Messages */}
       <KeyboardAvoidingView
-        style={styles.content}
+        style={[styles.content, { flex: showEmojiPicker ? 0.6 : 1 }]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
@@ -367,12 +514,24 @@ export default function ChatScreen() {
                     isSender ? styles.userMessage : styles.expertMessage
                   ]}
                 >
-                  <Text style={[
-                    styles.messageText,
-                    isSender ? styles.userMessageText : styles.expertMessageText
-                  ]}>
-                    {message.text}
-                  </Text>
+                  {message.imageUrl && (
+                    <View style={styles.imageWrapper}>
+                      <Image
+                        source={{ uri: message.imageUrl }}
+                        style={styles.messageImage}
+                        resizeMode="cover"
+                        onError={(e) => console.log('[Chat] Image load error:', e.nativeEvent.error)}
+                      />
+                    </View>
+                  )}
+                  {message.text && (
+                    <Text style={[
+                      styles.messageText,
+                      isSender ? styles.userMessageText : styles.expertMessageText
+                    ]}>
+                      {message.text}
+                    </Text>
+                  )}
                   <Text style={[
                     styles.timestamp,
                     isSender ? styles.userTimestamp : styles.expertTimestamp
@@ -393,8 +552,63 @@ export default function ChatScreen() {
           )}
         </ScrollView>
 
+        {/* Image Preview */}
+        {selectedImage && (
+          <View style={styles.imagePreviewContainer}>
+            <Image 
+              source={{ uri: selectedImage }} 
+              style={styles.imagePreview}
+              onError={(e) => console.log('[Chat] Preview image error:', e)}
+            />
+            <TouchableOpacity
+              style={styles.removeImageButton}
+              onPress={() => setSelectedImage(null)}
+            >
+              <X size={16} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Emoji Picker Modal */}
+        {showEmojiPicker && (
+          <View style={styles.emojiPickerContainer}>
+            <View style={styles.emojiPickerHeader}>
+              <Text style={styles.emojiPickerTitle}>Emojis</Text>
+              <TouchableOpacity onPress={() => setShowEmojiPicker(false)}>
+                <X size={20} color="#1F2937" />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={EMOJIS}
+              keyExtractor={(item, index) => index.toString()}
+              numColumns={8}
+              scrollEnabled={true}
+              nestedScrollEnabled={true}
+              contentContainerStyle={styles.emojiGridContent}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.emojiButton}
+                  onPress={() => {
+                    insertEmoji(item);
+                  }}
+                >
+                  <Text style={styles.emoji}>{item}</Text>
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        )}
+
         {/* Input */}
         <View style={styles.inputContainer}>
+          <TouchableOpacity
+            style={styles.iconButton}
+            onPress={pickImage}
+            disabled={isSending}
+          >
+            <ImagePlus size={20} color="#2563EB" />
+          </TouchableOpacity>
+          
           <TextInput
             style={styles.input}
             value={newMessage}
@@ -409,10 +623,19 @@ export default function ChatScreen() {
             blurOnSubmit={false}
             editable={!isSending}
           />
+          
           <TouchableOpacity
-            style={[styles.sendButton, (isSending || !newMessage.trim()) && styles.sendButtonDisabled]}
+            style={styles.iconButton}
+            onPress={() => setShowEmojiPicker(!showEmojiPicker)}
+            disabled={isSending}
+          >
+            <Smile size={20} color="#2563EB" />
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={[styles.sendButton, (isSending || (!newMessage.trim() && !selectedImage)) && styles.sendButtonDisabled]}
             onPress={handleSendMessage}
-            disabled={isSending || !newMessage.trim()}
+            disabled={isSending || (!newMessage.trim() && !selectedImage)}
           >
             {isSending ? (
               <ActivityIndicator size="small" color="#FFFFFF" />
@@ -573,13 +796,90 @@ const styles = StyleSheet.create({
   expertTimestamp: {
     color: '#9CA3AF',
   },
-  inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    padding: 16,
+  imageWrapper: {
+    width: '100%',
+    borderRadius: 8,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  messageImage: {
+    width: '100%',
+    height: 150,
+    borderRadius: 8,
+    marginBottom: 8,
+    resizeMode: 'cover',
+  },
+  imagePreviewContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderTopColor: '#E5E7EB',
+  },
+  imagePreview: {
+    width: '100%',
+    height: 120,
+    borderRadius: 12,
+    resizeMode: 'cover',
+  },
+  removeImageButton: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    borderRadius: 16,
+    width: 32,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emojiPickerContainer: {
+    maxHeight: '40%',
+    backgroundColor: '#FFFFFF',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+  },
+  emojiPickerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  emojiPickerTitle: {
+    fontSize: 14,
+    fontFamily: 'Inter-Bold',
+    color: '#1F2937',
+  },
+  emojiGridContent: {
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+  },
+  emojiButton: {
+    flex: 1,
+    aspectRatio: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginHorizontal: 4,
+    marginVertical: 3,
+    borderRadius: 6,
+    backgroundColor: '#F3F4F6',
+  },
+  emoji: {
+    fontSize: 20,
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    paddingBottom: 16,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    gap: 8,
   },
   input: {
     flex: 1,
@@ -588,11 +888,18 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    marginRight: 8,
     fontSize: 16,
     fontFamily: 'Inter-Regular',
     color: '#1F2937',
     textAlignVertical: 'center',
+  },
+  iconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   sendButton: {
     width: 40,

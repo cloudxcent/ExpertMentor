@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
 import { router } from 'expo-router';
-import { ArrowLeft, Bell, MessageCircle, Star, DollarSign, CheckCircle } from 'lucide-react-native';
+import { ArrowLeft, Bell, MessageCircle, Star, DollarSign, CheckCircle, AlertCircle } from 'lucide-react-native';
 import { storage, StorageKeys } from '../utils/storage';
 import { api } from '../utils/api';
 
@@ -15,35 +15,54 @@ interface Notification {
   createdAt: string;
 }
 
+interface UnreadMessage {
+  sessionId: string;
+  otherUserName: string;
+  otherUserId: string;
+  unreadCount: number;
+  lastMessage: string;
+}
+
 export default function NotificationsScreen() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [unreadMessages, setUnreadMessages] = useState<UnreadMessage[]>([]);
+  const [totalUnreadCount, setTotalUnreadCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     loadNotifications();
+    loadUnreadMessages();
 
-    let unsubscribe: (() => void) | null = null;
+    let notificationUnsubscribe: (() => void) | null = null;
+    let messagesUnsubscribe: (() => void) | null = null;
 
-    const setupRealtimeListener = async () => {
+    const setupRealtimeListeners = async () => {
       try {
         const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
         if (!profileData?.id) return;
 
-        unsubscribe = api.subscribeToNotifications(profileData.id, (notifs) => {
+        notificationUnsubscribe = api.subscribeToNotifications(profileData.id, (notifs) => {
           setNotifications(notifs);
           setIsLoading(false);
         });
+
+        messagesUnsubscribe = api.subscribeToUnreadMessages(profileData.id, (count) => {
+          setTotalUnreadCount(count);
+        });
       } catch (error) {
-        console.error('Error setting up real-time listener:', error);
+        console.error('Error setting up real-time listeners:', error);
       }
     };
 
-    setupRealtimeListener();
+    setupRealtimeListeners();
 
     return () => {
-      if (unsubscribe) {
-        unsubscribe();
+      if (notificationUnsubscribe) {
+        notificationUnsubscribe();
+      }
+      if (messagesUnsubscribe) {
+        messagesUnsubscribe();
       }
     };
   }, []);
@@ -63,6 +82,18 @@ export default function NotificationsScreen() {
     }
   };
 
+  const loadUnreadMessages = async () => {
+    try {
+      const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
+      if (!profileData?.id) return;
+
+      const count = await api.getUnreadMessageCount(profileData.id);
+      setTotalUnreadCount(count);
+    } catch (error) {
+      console.error('Error loading unread messages:', error);
+    }
+  };
+
   const handleRefresh = () => {
     setRefreshing(true);
     loadNotifications();
@@ -75,6 +106,19 @@ export default function NotificationsScreen() {
         prev.map(n => n.id === notification.id ? { ...n, isRead: true } : n)
       );
     }
+    
+    // Navigate to relevant screen based on notification type
+    if (notification.type === 'message' && notification.data?.sessionId) {
+      router.push(`/chat/${notification.data.senderId}`);
+    }
+  };
+
+  const handleUnreadMessagePress = async (message: UnreadMessage) => {
+    // Mark messages as read
+    await api.markChatMessagesAsRead(message.sessionId, (await storage.getItem(StorageKeys.USER_PROFILE))?.id || '');
+    
+    // Navigate to chat
+    router.push(`/chat/${message.otherUserId}`);
   };
 
   const handleMarkAllRead = async () => {
@@ -134,12 +178,12 @@ export default function NotificationsScreen() {
           <ArrowLeft size={24} color="#1F2937" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Notifications</Text>
-        {unreadCount > 0 && (
+        {(unreadCount > 0 || totalUnreadCount > 0) && (
           <TouchableOpacity onPress={handleMarkAllRead}>
             <Text style={styles.markAllText}>Mark all read</Text>
           </TouchableOpacity>
         )}
-        {unreadCount === 0 && <View style={{ width: 40 }} />}
+        {unreadCount === 0 && totalUnreadCount === 0 && <View style={{ width: 40 }} />}
       </View>
 
       <ScrollView
@@ -149,7 +193,35 @@ export default function NotificationsScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
         }
       >
-        {notifications.length === 0 && !isLoading && (
+        {/* Unread Messages Section */}
+        {totalUnreadCount > 0 && (
+          <View>
+            <View style={styles.sectionHeader}>
+              <MessageCircle size={18} color="#2563EB" />
+              <Text style={styles.sectionTitle}>Unread Messages</Text>
+              <View style={styles.unreadBadge}>
+                <Text style={styles.unreadBadgeText}>{totalUnreadCount}</Text>
+              </View>
+            </View>
+            <View style={styles.messagesSummary}>
+              <View style={styles.messageCountContainer}>
+                <AlertCircle size={20} color="#EF4444" />
+                <Text style={styles.messageSummaryText}>
+                  You have {totalUnreadCount} unread {totalUnreadCount === 1 ? 'message' : 'messages'} waiting
+                </Text>
+              </View>
+              <TouchableOpacity 
+                style={styles.viewAllButton}
+                onPress={() => router.push('/(tabs)/chat')}
+              >
+                <Text style={styles.viewAllButtonText}>View Messages</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {/* Notifications Section */}
+        {notifications.length === 0 && totalUnreadCount === 0 && !isLoading && (
           <View style={styles.emptyState}>
             <Bell size={48} color="#D1D5DB" />
             <Text style={styles.emptyTitle}>No notifications yet</Text>
@@ -157,6 +229,10 @@ export default function NotificationsScreen() {
               When you get notifications, they'll show up here
             </Text>
           </View>
+        )}
+
+        {notifications.length > 0 && totalUnreadCount > 0 && (
+          <Text style={styles.notificationsLabel}>Other Notifications</Text>
         )}
 
         {notifications.map((notification) => (
@@ -172,8 +248,16 @@ export default function NotificationsScreen() {
               {getNotificationIcon(notification.type)}
             </View>
             <View style={styles.notificationContent}>
-              <Text style={styles.notificationTitle}>{notification.title}</Text>
+              <View style={styles.notificationHeader}>
+                <Text style={styles.notificationTitle}>{notification.title}</Text>
+                {notification.type === 'message' && (
+                  <View style={styles.messageBadge}>
+                    <MessageCircle size={16} color="#2563EB" />
+                  </View>
+                )}
+              </View>
               <Text style={styles.notificationMessage}>
+
                 {notification.message}
               </Text>
               <Text style={styles.notificationTime}>
@@ -222,24 +306,77 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
   },
-  emptyState: {
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+    marginTop: 8,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontFamily: 'Inter-SemiBold',
+    color: '#1F2937',
+    marginLeft: 12,
+    flex: 1,
+  },
+  unreadBadge: {
+    backgroundColor: '#DC2626',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    minWidth: 28,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 40,
-    paddingTop: 100,
   },
-  emptyTitle: {
-    fontSize: 18,
+  unreadBadgeText: {
+    color: '#FFFFFF',
     fontFamily: 'Inter-SemiBold',
-    color: '#374151',
-    marginTop: 16,
+    fontSize: 12,
   },
-  emptyText: {
+  messagesSummary: {
+    backgroundColor: '#FEF2F2',
+    marginHorizontal: 16,
+    marginVertical: 12,
+    padding: 16,
+    borderRadius: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#EF4444',
+  },
+  messageCountContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  messageSummaryText: {
     fontSize: 14,
-    fontFamily: 'Inter-Regular',
+    fontFamily: 'Inter-SemiBold',
+    color: '#991B1B',
+    marginLeft: 12,
+    flex: 1,
+  },
+  viewAllButton: {
+    backgroundColor: '#2563EB',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  viewAllButtonText: {
+    color: '#FFFFFF',
+    fontFamily: 'Inter-SemiBold',
+    fontSize: 14,
+  },
+  notificationsLabel: {
+    fontSize: 14,
+    fontFamily: 'Inter-SemiBold',
     color: '#6B7280',
-    textAlign: 'center',
-    marginTop: 8,
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    paddingBottom: 12,
   },
   notificationCard: {
     flexDirection: 'row',
@@ -263,11 +400,20 @@ const styles = StyleSheet.create({
   notificationContent: {
     flex: 1,
   },
+  notificationHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
   notificationTitle: {
     fontSize: 15,
     fontFamily: 'Inter-SemiBold',
     color: '#1F2937',
-    marginBottom: 4,
+    flex: 1,
+  },
+  messageBadge: {
+    marginLeft: 8,
   },
   notificationMessage: {
     fontSize: 14,
@@ -286,5 +432,24 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: '#2563EB',
     marginLeft: 8,
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 40,
+    paddingTop: 100,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontFamily: 'Inter-SemiBold',
+    color: '#374151',
+    marginTop: 16,
+  },
+  emptyText: {
+    fontSize: 14,
+    fontFamily: 'Inter-Regular',
+    color: '#6B7280',
+    textAlign: 'center',
+    marginTop: 8,
   },
 });

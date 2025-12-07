@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Image, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Image, ActivityIndicator, Badge } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { MessageCircle, Clock } from 'lucide-react-native';
+import { MessageCircle, Clock, AlertCircle } from 'lucide-react-native';
 import { db } from '../../config/firebase';
-import { collection, onSnapshot, getDoc, doc, getDocs, query, orderBy } from 'firebase/firestore';
+import { collection, onSnapshot, getDoc, doc, getDocs, query, orderBy, where } from 'firebase/firestore';
 import { storage, StorageKeys } from '../../utils/storage';
 import { ensureMediaUrl } from '../../utils/firebaseStorageUrl';
 
@@ -18,6 +18,7 @@ interface ChatSession {
   lastMessageAt: any;
   createdAt: string;
   messageCount?: number;
+  unreadCount?: number;
   isActive: boolean;
 }
 
@@ -25,6 +26,7 @@ export default function ChatTabScreen() {
   const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [totalUnreadCount, setTotalUnreadCount] = useState(0);
 
   const loadUserAndSessions = async () => {
     try {
@@ -42,6 +44,7 @@ export default function ChatTabScreen() {
       const unsubscribe = onSnapshot(sessionsRef, async (snapshot) => {
         console.log('[ChatTab] Snapshot received:', snapshot.size, 'total sessions');
         const activeSessions: ChatSession[] = [];
+        let totalUnread = 0;
 
         for (const docSnap of snapshot.docs) {
           const sessionData = docSnap.data();
@@ -73,6 +76,16 @@ export default function ChatTabScreen() {
                 let lastTime = lastMessageAt;
                 const messageCount = messagesSnap.docs.length;
 
+                // Count unread messages for current user
+                const unreadQuery = query(
+                  messagesRef,
+                  where('recipientId', '==', profileData.id),
+                  where('isRead', '==', false)
+                );
+                const unreadSnap = await getDocs(unreadQuery);
+                const unreadCount = unreadSnap.size;
+                totalUnread += unreadCount;
+
                 if (messagesSnap.docs.length > 0) {
                   const lastMsg = messagesSnap.docs[0].data();
                   lastMessage = lastMsg.text?.substring(0, 50) || '';
@@ -96,6 +109,7 @@ export default function ChatTabScreen() {
                   lastMessageAt: lastTime,
                   createdAt,
                   messageCount,
+                  unreadCount,
                   isActive
                 });
               } catch (msgErr) {
@@ -111,6 +125,7 @@ export default function ChatTabScreen() {
                   lastMessageAt,
                   createdAt,
                   messageCount: 0,
+                  unreadCount: 0,
                   isActive: false
                 });
               }
@@ -120,7 +135,8 @@ export default function ChatTabScreen() {
           }
         }
 
-        console.log('[ChatTab] ✓ Loaded', activeSessions.length, 'sessions');
+        console.log('[ChatTab] ✓ Loaded', activeSessions.length, 'sessions with', totalUnread, 'unread messages');
+        setTotalUnreadCount(totalUnread);
         setSessions(activeSessions.sort((a, b) => {
           const timeA = a.lastMessageAt?.toDate?.() || new Date(a.lastMessageAt || 0);
           const timeB = b.lastMessageAt?.toDate?.() || new Date(b.lastMessageAt || 0);
@@ -178,29 +194,57 @@ export default function ChatTabScreen() {
 
   const SessionCard = ({ session }: { session: ChatSession }) => (
     <TouchableOpacity
-      style={styles.sessionCard}
+      style={[
+        styles.sessionCard,
+        session.unreadCount && session.unreadCount > 0 && styles.sessionCardUnread
+      ]}
       onPress={() => openChat(session)}
     >
-      <Image
-        source={{
-          uri: session.otherUserImage || 'https://images.pexels.com/photos/3778603/pexels-photo-3778603.jpeg?auto=compress&cs=tinysrgb&w=400'
-        }}
-        style={styles.avatar}
-      />
+      <View style={styles.avatarContainer}>
+        <Image
+          source={{
+            uri: session.otherUserImage || 'https://images.pexels.com/photos/3778603/pexels-photo-3778603.jpeg?auto=compress&cs=tinysrgb&w=400'
+          }}
+          style={styles.avatar}
+        />
+        {session.unreadCount && session.unreadCount > 0 && (
+          <View style={styles.unreadBadge}>
+            <Text style={styles.unreadBadgeText}>{session.unreadCount}</Text>
+          </View>
+        )}
+      </View>
       
       <View style={styles.sessionInfo}>
         <View style={styles.userNameRow}>
-          <Text style={styles.userName}>{session.otherUserName}</Text>
-          <Text style={styles.messageCount}>
-            {session.messageCount || 0} msg{session.messageCount !== 1 ? 's' : ''}
+          <Text style={[
+            styles.userName,
+            session.unreadCount && session.unreadCount > 0 && styles.userNameUnread
+          ]}>
+            {session.otherUserName}
           </Text>
+          <View style={styles.countContainer}>
+            <Text style={styles.messageCount}>
+              {session.messageCount || 0} msg{session.messageCount !== 1 ? 's' : ''}
+            </Text>
+          </View>
         </View>
-        <Text style={styles.lastMessage} numberOfLines={1}>
+        <Text style={[
+          styles.lastMessage,
+          session.unreadCount && session.unreadCount > 0 && styles.lastMessageUnread
+        ]} numberOfLines={1}>
           {session.lastMessage || 'No messages yet'}
         </Text>
-        <Text style={styles.chatStatus}>
-          {session.messageCount === 0 ? '📋 New Chat' : '💬 Active Chat'}
-        </Text>
+        <View style={styles.chatStatusRow}>
+          <Text style={styles.chatStatus}>
+            {session.messageCount === 0 ? '📋 New Chat' : '💬 Active Chat'}
+          </Text>
+          {session.unreadCount && session.unreadCount > 0 && (
+            <View style={styles.unreadIndicator}>
+              <AlertCircle size={14} color="#EF4444" />
+              <Text style={styles.unreadIndicatorText}>{session.unreadCount} unread</Text>
+            </View>
+          )}
+        </View>
       </View>
 
       <View style={styles.timeInfo}>
@@ -212,7 +256,14 @@ export default function ChatTabScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Messages</Text>
+        <View style={styles.headerContent}>
+          <Text style={styles.headerTitle}>Messages</Text>
+          {totalUnreadCount > 0 && (
+            <View style={styles.headerBadge}>
+              <Text style={styles.headerBadgeText}>{totalUnreadCount}</Text>
+            </View>
+          )}
+        </View>
       </View>
 
       <View style={styles.tabsContainer}>
@@ -278,10 +329,29 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB'
   },
+  headerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
   headerTitle: {
     fontSize: 28,
     fontWeight: '700',
     color: '#1F2937'
+  },
+  headerBadge: {
+    backgroundColor: '#DC2626',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    minWidth: 28,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  headerBadgeText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 12
   },
   tabsContainer: {
     flexDirection: 'row',
@@ -352,12 +422,39 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E5E7EB'
   },
+  sessionCardUnread: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA'
+  },
+  avatarContainer: {
+    position: 'relative',
+    marginRight: 12
+  },
   avatar: {
     width: 56,
     height: 56,
     borderRadius: 28,
-    marginRight: 12,
     backgroundColor: '#E5E7EB'
+  },
+  unreadBadge: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#DC2626',
+    borderRadius: 12,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    minWidth: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF'
+  },
+  unreadBadgeText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 11
   },
   sessionInfo: {
     flex: 1
@@ -371,7 +468,15 @@ const styles = StyleSheet.create({
   userName: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#1F2937'
+    color: '#1F2937',
+    flex: 1
+  },
+  userNameUnread: {
+    color: '#991B1B',
+    fontWeight: '700'
+  },
+  countContainer: {
+    marginLeft: 8
   },
   messageCount: {
     fontSize: 12,
@@ -387,10 +492,33 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     marginBottom: 4
   },
+  lastMessageUnread: {
+    color: '#1F2937',
+    fontWeight: '500'
+  },
+  chatStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
   chatStatus: {
     fontSize: 11,
     color: '#059669',
     fontWeight: '500'
+  },
+  unreadIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    gap: 4
+  },
+  unreadIndicatorText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#DC2626'
   },
   timeInfo: {
     alignItems: 'flex-end',
