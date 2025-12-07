@@ -239,8 +239,9 @@ export const api = {
       });
 
       return notifications;
-    } catch (error) {
-      console.error('Error getting notifications:', error);
+    } catch (error: any) {
+      console.warn('Error getting notifications:', error?.message || error);
+      // Return empty array on permission error instead of crashing
       return [];
     }
   },
@@ -268,6 +269,11 @@ export const api = {
         });
       });
       callback(notifications);
+    }, (error) => {
+      // Handle permission errors gracefully without crashing
+      console.warn('Notification subscription error:', error?.message);
+      // Return empty array to prevent app from breaking
+      callback([]);
     });
 
     return unsubscribe;

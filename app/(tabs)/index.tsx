@@ -314,7 +314,7 @@ export default function HomeScreen() {
             </View>
           </View>
 
-          <View style={styles.section}>
+          <View style={styles.newsSection}>
             <View style={styles.sectionHeader}>
               <View style={styles.newsHeader}>
                 <Newspaper size={20} color="#1F2937" />
@@ -444,7 +444,7 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        <View style={styles.section}>
+        <View style={styles.newsSection}>
           <View style={styles.sectionHeader}>
             <View style={styles.newsHeader}>
               <Newspaper size={20} color="#1F2937" />
@@ -780,7 +780,8 @@ const styles = StyleSheet.create({
     paddingVertical: 20,
     backgroundColor: '#FFFFFF',
     marginHorizontal: 16,
-    marginTop: 16,
+    marginTop: 0,
+    marginBottom: 0,
     borderRadius: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -808,13 +809,20 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 16,
   },
+  newsSection: {
+    paddingHorizontal: 24,
+    marginTop: 24,
+    marginBottom: 24,
+  },
   newsHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    marginBottom: 0,
   },
   newsContainer: {
     gap: 12,
+    marginTop: 8,
   },
   newsCard: {
     flexDirection: 'row',
