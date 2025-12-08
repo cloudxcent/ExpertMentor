@@ -2,10 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Image, Alert, ActivityIndicator, Share as RNShare, Linking, Platform } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Star, Clock, MessageCircle, Phone, Video, Heart, Share, MapPin, Award, Users, Copy, Mail } from 'lucide-react-native';
+import { ArrowLeft, Star, Clock, MessageCircle, Phone, Video, Heart, Share, MapPin, Award, Users, Copy, Mail, User } from 'lucide-react-native';
 import { db } from '../../config/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { storage, StorageKeys } from '../../utils/storage';
+import { api } from '../../utils/api';
+import ReviewModal from '../../components/ReviewModal';
 
 interface Expert {
   id: string;
@@ -13,6 +15,7 @@ interface Expert {
   expertise: string;
   experience: string;
   rating?: number;
+  totalReviews?: number;
   isOnline: boolean;
   chatRate: number;
   callRate: number;
@@ -22,14 +25,33 @@ interface Expert {
   userType?: string;
 }
 
+interface Review {
+  id: string;
+  rating: number;
+  comment: string;
+  clientName: string;
+  clientAvatar?: string;
+  createdAt: Date;
+}
+
 export default function ExpertDetailScreen() {
   const { expertId } = useLocalSearchParams();
   const [expert, setExpert] = useState<Expert | null>(null);
+  const [reviews, setReviews] = useState<Review[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isFavorited, setIsFavorited] = useState(false);
+  const [averageRating, setAverageRating] = useState(0);
+  const [totalReviews, setTotalReviews] = useState(0);
+  const [showReviewModal, setShowReviewModal] = useState(false);
 
   useEffect(() => {
     loadExpert();
+    loadExpertReviews();
+    loadExpertRating();
+
+    return () => {
+      // Cleanup subscriptions if needed
+    };
   }, [expertId]);
 
   const loadExpert = async () => {
@@ -56,20 +78,16 @@ export default function ExpertDetailScreen() {
       if (docSnap.exists()) {
         const data = docSnap.data();
         
-        // Verify this is an expert profile
-        if (data.userType !== 'expert') {
-          console.warn('[ExpertDetail] Profile is not marked as expert');
-          Alert.alert('Error', 'This profile is not an expert profile');
-          router.back();
-          return;
-        }
+        // Log profile type for debugging
+        console.log('[ExpertDetail] Profile type:', data.userType);
         
         const expertData: Expert = {
           id: data.id,
           name: data.name || 'Unknown Expert',
           expertise: data.expertise || '',
           experience: data.experience || '',
-          rating: data.averageRating || 4.5,
+          rating: data.averageRating || 0,
+          totalReviews: data.totalReviews || 0,
           isOnline: data.isOnline || false,
           chatRate: data.chatRate || 0,
           callRate: data.callRate || 0,
@@ -92,6 +110,35 @@ export default function ExpertDetailScreen() {
       Alert.alert('Error', 'Something went wrong loading expert details');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const loadExpertReviews = async () => {
+    try {
+      if (!expertId) return;
+      const expertReviews = await api.getExpertReviews(expertId as string);
+      setReviews(expertReviews);
+    } catch (error) {
+      console.error('[ExpertDetail] Error loading reviews:', error);
+    }
+  };
+
+  const loadExpertRating = async () => {
+    try {
+      if (!expertId) return;
+      const rating = await api.getExpertRating(expertId as string);
+      setAverageRating(rating.averageRating);
+      setTotalReviews(rating.totalReviews);
+      
+      // Subscribe to real-time rating updates
+      const unsubscribe = api.subscribeToExpertRating(expertId as string, (ratingData) => {
+        setAverageRating(ratingData.averageRating);
+        setTotalReviews(ratingData.totalReviews);
+      });
+
+      return unsubscribe;
+    } catch (error) {
+      console.error('[ExpertDetail] Error loading rating:', error);
     }
   };
 
@@ -305,14 +352,14 @@ export default function ExpertDetailScreen() {
             <View style={styles.statsRow}>
               <View style={styles.statItem}>
                 <Star size={16} color="#F59E0B" fill="#F59E0B" />
-                <Text style={styles.statValue}>{expert.rating || 4.8}</Text>
+                <Text style={styles.statValue}>{averageRating > 0 ? averageRating : (expert.rating || '-')}</Text>
                 <Text style={styles.statLabel}>Rating</Text>
               </View>
               <View style={styles.divider} />
               <View style={styles.statItem}>
                 <Users size={16} color="#2563EB" />
-                <Text style={styles.statValue}>{expert.experience || '5+'}</Text>
-                <Text style={styles.statLabel}>Years Exp</Text>
+                <Text style={styles.statValue}>{totalReviews}</Text>
+                <Text style={styles.statLabel}>Reviews</Text>
               </View>
               <View style={styles.divider} />
               <View style={styles.statItem}>
@@ -375,9 +422,78 @@ export default function ExpertDetailScreen() {
               </View>
             </View>
           </View>
+
+          {/* Reviews Section */}
+          <View style={styles.section}>
+            <View style={styles.reviewsHeader}>
+              <Text style={styles.sectionTitle}>Reviews ({totalReviews})</Text>
+              {averageRating > 0 && (
+                <View style={styles.averageRatingBadge}>
+                  <Star size={14} color="#F59E0B" fill="#F59E0B" />
+                  <Text style={styles.averageRatingText}>{averageRating}</Text>
+                </View>
+              )}
+            </View>
+
+            {reviews.length > 0 ? (
+              reviews.slice(0, 3).map((review) => (
+                <View key={review.id} style={styles.reviewCard}>
+                  <View style={styles.reviewHeader}>
+                    {review.clientAvatar ? (
+                      <Image source={{ uri: review.clientAvatar }} style={styles.reviewerAvatar} />
+                    ) : (
+                      <View style={styles.reviewerAvatarPlaceholder}>
+                        <User size={16} color="#9CA3AF" />
+                      </View>
+                    )}
+                    <View style={styles.reviewerInfo}>
+                      <Text style={styles.reviewerName}>{review.clientName}</Text>
+                      <View style={styles.ratingStars}>
+                        {[...Array(5)].map((_, i) => (
+                          <Star
+                            key={i}
+                            size={12}
+                            color={i < review.rating ? "#F59E0B" : "#D1D5DB"}
+                            fill={i < review.rating ? "#F59E0B" : "none"}
+                          />
+                        ))}
+                      </View>
+                    </View>
+                  </View>
+                  {review.comment && (
+                    <Text style={styles.reviewComment}>{review.comment}</Text>
+                  )}
+                </View>
+              ))
+            ) : (
+              <Text style={styles.noReviewsText}>No reviews yet</Text>
+            )}
+
+            {totalReviews > 3 && (
+              <TouchableOpacity
+                style={styles.viewAllReviewsButton}
+                onPress={() => {
+                  router.push({
+                    pathname: '/reviews',
+                    params: { expertId: expert?.id }
+                  });
+                }}
+              >
+                <Text style={styles.viewAllReviewsText}>View all {totalReviews} reviews →</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </ScrollView>
 
         <View style={styles.footer}>
+          <TouchableOpacity
+            style={[styles.footerButton, styles.rateButton]}
+            onPress={() => setShowReviewModal(true)}
+          >
+            <Star size={20} color="#F59E0B" />
+            <Text style={styles.rateButtonText}>Rate</Text>
+          </TouchableOpacity>
+
           <TouchableOpacity
             style={styles.chatButton}
             onPress={handleStartChat}
@@ -394,6 +510,18 @@ export default function ExpertDetailScreen() {
             <Text style={styles.callButtonText}>Call Now</Text>
           </TouchableOpacity>
         </View>
+
+        <ReviewModal
+          visible={showReviewModal}
+          expertId={expert?.id || ''}
+          expertName={expert?.name || ''}
+          onClose={() => setShowReviewModal(false)}
+          onSuccess={() => {
+            // Reload reviews after successful submission
+            loadExpertReviews();
+            loadExpertRating();
+          }}
+        />
       </LinearGradient>
     </SafeAreaView>
   );
@@ -602,13 +730,13 @@ const styles = StyleSheet.create({
   footer: {
     flexDirection: 'row',
     padding: 16,
-    gap: 12,
+    gap: 10,
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderTopColor: '#E5E7EB',
   },
   chatButton: {
-    flex: 1,
+    flex: 1.2,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -623,7 +751,7 @@ const styles = StyleSheet.create({
     color: '#2563EB',
   },
   callButton: {
-    flex: 1,
+    flex: 1.2,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -636,5 +764,103 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  footerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    borderRadius: 12,
+    gap: 8,
+    flex: 0.8,
+  },
+  rateButton: {
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1.5,
+    borderColor: '#F59E0B',
+  },
+  rateButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#F59E0B',
+  },
+  reviewsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  averageRatingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    gap: 4,
+  },
+  averageRatingText: {
+    fontWeight: '700',
+    color: '#78350F',
+    fontSize: 14,
+  },
+  reviewCard: {
+    backgroundColor: '#F9FAFB',
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 12,
+  },
+  reviewHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 8,
+    gap: 8,
+  },
+  reviewerAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+  },
+  reviewerAvatarPlaceholder: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#E5E7EB',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  reviewerInfo: {
+    flex: 1,
+  },
+  reviewerName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1F2937',
+    marginBottom: 4,
+  },
+  ratingStars: {
+    flexDirection: 'row',
+    gap: 2,
+  },
+  reviewComment: {
+    fontSize: 13,
+    color: '#6B7280',
+    lineHeight: 18,
+  },
+  noReviewsText: {
+    fontSize: 14,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    paddingVertical: 20,
+  },
+  viewAllReviewsButton: {
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  viewAllReviewsText: {
+    fontSize: 14,
+    color: '#2563EB',
+    fontWeight: '600',
   },
 });

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { ArrowLeft, Bell, MessageCircle, Star, DollarSign, CheckCircle, AlertCircle } from 'lucide-react-native';
 import { storage, StorageKeys } from '../utils/storage';
 import { api } from '../utils/api';
@@ -67,6 +67,13 @@ export default function NotificationsScreen() {
     };
   }, []);
 
+  // Reload unread messages when returning to the Notifications tab
+  useFocusEffect(
+    React.useCallback(() => {
+      loadUnreadMessages();
+    }, [])
+  );
+
   const loadNotifications = async () => {
     try {
       const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
@@ -97,6 +104,7 @@ export default function NotificationsScreen() {
   const handleRefresh = () => {
     setRefreshing(true);
     loadNotifications();
+    loadUnreadMessages();
   };
 
   const handleNotificationPress = async (notification: Notification) => {

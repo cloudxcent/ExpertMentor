@@ -1,81 +1,100 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Image } from 'react-native';
-import { router } from 'expo-router';
-import { ArrowLeft, Star, ThumbsUp, User } from 'lucide-react-native';
-import { supabase } from '../config/supabase';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Image, ActivityIndicator } from 'react-native';
+import { router, useLocalSearchParams } from 'expo-router';
+import { ArrowLeft, Star, User } from 'lucide-react-native';
 import { storage, StorageKeys } from '../utils/storage';
+import { api } from '../utils/api';
 
 interface Review {
   id: string;
   rating: number;
   comment: string;
-  reviewer_name: string;
-  reviewer_avatar?: string;
-  created_at: string;
+  clientName: string;
+  clientAvatar?: string;
+  createdAt: Date;
 }
 
 export default function ReviewsScreen() {
+  const { expertId } = useLocalSearchParams();
   const [reviews, setReviews] = useState<Review[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [averageRating, setAverageRating] = useState(0);
+  const [expertName, setExpertName] = useState('Expert');
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     loadReviews();
-  }, []);
+  }, [expertId]);
 
   const loadReviews = async () => {
     try {
-      const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-      if (!profileData) return;
-
-      const { data, error } = await supabase
-        .from('reviews')
-        .select(`
-          *,
-          client:profiles!reviews_client_id_fkey(name, avatar_url)
-        `)
-        .eq('expert_id', profileData.id)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-
-      const formattedReviews: Review[] = (data || []).map(review => ({
-        id: review.id,
-        rating: review.rating,
-        comment: review.comment || '',
-        reviewer_name: review.client?.name || 'Anonymous',
-        reviewer_avatar: review.client?.avatar_url,
-        created_at: review.created_at
-      }));
-
-      setReviews(formattedReviews);
-
-      if (formattedReviews.length > 0) {
-        const avg = formattedReviews.reduce((sum, r) => sum + r.rating, 0) / formattedReviews.length;
-        setAverageRating(Number(avg.toFixed(1)));
+      setIsLoading(true);
+      
+      // If expertId is provided, load reviews for that expert
+      const targetExpertId = expertId as string;
+      if (!targetExpertId) {
+        // Otherwise load reviews for current user
+        const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
+        if (!profileData?.id) return;
+        
+        const userReviews = await api.getUserReviews(profileData.id);
+        setReviews(userReviews);
+        
+        if (userReviews.length > 0) {
+          const avg = userReviews.reduce((sum, r) => sum + r.rating, 0) / userReviews.length;
+          setAverageRating(Number(avg.toFixed(1)));
+        }
+        return;
       }
+
+      // Load expert reviews
+      const expertReviews = await api.getExpertReviews(targetExpertId);
+      setReviews(expertReviews);
+
+      // Get expert name
+      const expertProfile = await api.getProfile(targetExpertId);
+      if (expertProfile.success && expertProfile.data) {
+        setExpertName(expertProfile.data.name);
+      }
+
+      // Get average rating
+      const ratingData = await api.getExpertRating(targetExpertId);
+      setAverageRating(ratingData.averageRating);
+
+      // Subscribe to real-time updates
+      const unsubscribe = api.subscribeToExpertReviews(targetExpertId, (updatedReviews) => {
+        setReviews(updatedReviews);
+      });
+
+      return unsubscribe;
     } catch (error) {
       console.error('Error loading reviews:', error);
     } finally {
       setIsLoading(false);
+      setRefreshing(false);
     }
+  };
+
+  const handleRefresh = () => {
+    setRefreshing(true);
+    loadReviews();
   };
 
   const ReviewCard = ({ review }: { review: Review }) => (
     <View style={styles.reviewCard}>
       <View style={styles.reviewHeader}>
         <View style={styles.reviewerInfo}>
-          {review.reviewer_avatar ? (
-            <Image source={{ uri: review.reviewer_avatar }} style={styles.reviewerAvatar} />
+          {review.clientAvatar ? (
+            <Image source={{ uri: review.clientAvatar }} style={styles.reviewerAvatar} />
           ) : (
             <View style={styles.reviewerAvatarPlaceholder}>
               <User size={20} color="#9CA3AF" />
             </View>
           )}
           <View style={styles.reviewerDetails}>
-            <Text style={styles.reviewerName}>{review.reviewer_name}</Text>
+            <Text style={styles.reviewerName}>{review.clientName}</Text>
             <Text style={styles.reviewDate}>
-              {new Date(review.created_at).toLocaleDateString('en-US', {
+              {new Date(review.createdAt).toLocaleDateString('en-US', {
                 month: 'short',
                 day: 'numeric',
                 year: 'numeric'

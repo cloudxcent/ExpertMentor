@@ -57,18 +57,31 @@ export default function MySessionsScreen() {
         console.log('[MySessions] Loading chat sessions for user:', profileData.id);
         const sessionsRef = collection(db, 'chat_sessions');
         
-        const unsubscribe = onSnapshot(sessionsRef, async (snapshot) => {
-          console.log('[MySessions] Snapshot received:', snapshot.size, 'total sessions');
+        // Create queries for sessions where user is user1 or user2
+        const q1 = query(sessionsRef, where('user1Id', '==', profileData.id));
+        const q2 = query(sessionsRef, where('user2Id', '==', profileData.id));
+        
+        // Subscribe to user1 sessions
+        const unsubscribe1 = onSnapshot(q1, async (snapshot1) => {
+          console.log('[MySessions] User1 sessions:', snapshot1.size);
           const activeSessions: ChatSession[] = [];
 
-          for (const docSnap of snapshot.docs) {
+          const allDocs = [
+            ...snapshot1.docs,
+          ];
+
+          // Also get user2 sessions
+          try {
+            const snapshot2 = await getDocs(q2);
+            console.log('[MySessions] User2 sessions:', snapshot2.size);
+            allDocs.push(...snapshot2.docs);
+          } catch (err) {
+            console.warn('[MySessions] Error fetching user2 sessions:', err);
+          }
+
+          for (const docSnap of allDocs) {
             const sessionData = docSnap.data();
             const { user1Id, user2Id, createdAt, lastMessageAt } = sessionData;
-
-            // Check if current user is part of this session
-            if (user1Id !== profileData.id && user2Id !== profileData.id) {
-              continue;
-            }
 
             console.log('[MySessions] Processing session:', docSnap.id);
 
@@ -140,7 +153,7 @@ export default function MySessionsScreen() {
           console.error('[MySessions] ✗ Listener error:', error?.code || error?.message || error);
         });
 
-        return () => unsubscribe();
+        return () => unsubscribe1();
       } else {
         // Load expert sessions
         loadExpertSessions(profileData.id);

@@ -3,7 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, SafeAr
 import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Send, Phone, Video, MoreVertical, Wallet, Plus, Smile, ImagePlus, X } from 'lucide-react-native';
 import { db, auth } from '../../config/firebase';
-import { collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, getDoc, doc, setDoc, getDocs } from 'firebase/firestore';
+import { collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, getDoc, doc, setDoc, getDocs, updateDoc } from 'firebase/firestore';
 import { storage, StorageKeys } from '../../utils/storage';
 import { ensureMediaUrl } from '../../utils/firebaseStorageUrl';
 import { createMessageNotification } from '../../utils/notifications';
@@ -37,8 +37,11 @@ export default function ChatScreen() {
   const [expertDetails, setExpertDetails] = useState<any>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [imageViewerModal, setImageViewerModal] = useState(false);
+  const [viewingImageUrl, setViewingImageUrl] = useState<string | null>(null);
   const scrollViewRef = useRef<ScrollView>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
+  const hasScrolledRef = useRef(false);
 
   const expert = Array.isArray(expertId) ? expertId[0] : expertId;
 
@@ -123,6 +126,26 @@ export default function ChatScreen() {
         
         setMessages(initialMessages);
         console.log('[Chat] ✓ Loaded', initialMessages.length, 'messages');
+
+        // Mark all messages as read for the current user
+        try {
+          const unreadQuery = query(
+            messagesRef,
+            where('recipientId', '==', profileData.id),
+            where('isRead', '==', false)
+          );
+          const unreadSnapshot = await getDocs(unreadQuery);
+          
+          if (unreadSnapshot.size > 0) {
+            console.log('[Chat] ✓ Marking', unreadSnapshot.size, 'messages as read');
+            const updatePromises = unreadSnapshot.docs.map((doc) =>
+              updateDoc(doc.ref, { isRead: true })
+            );
+            await Promise.all(updatePromises);
+          }
+        } catch (readError) {
+          console.log('[Chat] ⚠ Error marking messages as read:', readError);
+        }
       } catch (err) {
         console.log('[Chat] No messages yet');
       }
@@ -139,6 +162,9 @@ export default function ChatScreen() {
     if (!sessionId || !currentUserId) {
       return;
     }
+
+    // Reset scroll flag when setting up listener
+    hasScrolledRef.current = false;
 
     console.log('[Chat] 📡 Setting up listener for session:', sessionId);
 
@@ -170,9 +196,14 @@ export default function ChatScreen() {
         setMessages(loadedMessages);
         console.log('[Chat] ✓ Messages state updated:', loadedMessages.length);
 
+        // Delay scroll to ensure messages are rendered
         setTimeout(() => {
-          scrollViewRef.current?.scrollToEnd({ animated: true });
-        }, 100);
+          try {
+            scrollViewRef.current?.scrollToEnd({ animated: false });
+          } catch (error) {
+            console.log('[Chat] Scroll error:', error);
+          }
+        }, 200);
       },
       (error: any) => {
         console.error('[Chat] ✗ Listener error:', error?.code || error?.message || error);
@@ -321,24 +352,35 @@ export default function ChatScreen() {
     }
   };
 
-  const downloadProfileImage = async () => {
+  const downloadProfileImage = () => {
+    // Instead of downloading, navigate to expert profile
+    router.push({
+      pathname: '/expert-detail/[expertId]',
+      params: {
+        expertId: expert
+      }
+    });
+  };
+
+  const openImageViewer = (imageUrl: string) => {
+    setViewingImageUrl(ensureMediaUrl(imageUrl));
+    setImageViewerModal(true);
+  };
+
+  const downloadImage = async (imageUrl: string) => {
     try {
-      if (!expertDetails?.avatarUrl) {
-        alert('No profile image to download');
+      if (!imageUrl) {
+        alert('No image to download');
         return;
       }
-
-      const imageUrl = ensureMediaUrl(expertDetails.avatarUrl);
-      console.log('[Chat] Downloading profile image:', imageUrl);
 
       const response = await fetch(imageUrl);
       const blob = await response.blob();
       
-      // Create a data URL from the blob
       const reader = new FileReader();
       reader.onloadend = async () => {
         const base64 = (reader.result as string).split(',')[1];
-        const fileName = `${expertName || 'profile'}_${Date.now()}.jpg`;
+        const fileName = `chat-image_${Date.now()}.jpg`;
         
         // For web, trigger download
         if (Platform.OS === 'web') {
@@ -348,22 +390,22 @@ export default function ChatScreen() {
           document.body.appendChild(link);
           link.click();
           document.body.removeChild(link);
-          console.log('[Chat] Profile image downloaded:', fileName);
-          alert(`Profile image saved as ${fileName}`);
+          console.log('[Chat] Image downloaded:', fileName);
+          alert(`Image saved as ${fileName}`);
         } else {
           // For mobile, save to local file system
           const fileUri = `${FileSystem.documentDirectory}${fileName}`;
           await FileSystem.writeAsStringAsync(fileUri, base64, {
             encoding: FileSystem.EncodingType.Base64,
           });
-          console.log('[Chat] Profile image saved to:', fileUri);
-          alert(`Profile image saved to Downloads`);
+          console.log('[Chat] Image saved to:', fileUri);
+          alert(`Image saved to Downloads`);
         }
       };
       reader.readAsDataURL(blob);
     } catch (error) {
       console.error('[Chat] Download error:', error);
-      alert('Failed to download profile image');
+      alert('Failed to download image');
     }
   };
 
@@ -497,7 +539,12 @@ export default function ChatScreen() {
           style={styles.messagesContainer}
           contentContainerStyle={styles.messagesContent}
           showsVerticalScrollIndicator={false}
-          onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
+          onContentSizeChange={() => {
+            if (!hasScrolledRef.current) {
+              scrollViewRef.current?.scrollToEnd({ animated: false });
+              hasScrolledRef.current = true;
+            }
+          }}
         >
           {messages.length === 0 ? (
             <View style={styles.emptyState}>
@@ -515,14 +562,17 @@ export default function ChatScreen() {
                   ]}
                 >
                   {message.imageUrl && (
-                    <View style={styles.imageWrapper}>
+                    <TouchableOpacity 
+                      style={styles.imageWrapper}
+                      onPress={() => openImageViewer(message.imageUrl || '')}
+                    >
                       <Image
                         source={{ uri: message.imageUrl }}
                         style={styles.messageImage}
                         resizeMode="cover"
                         onError={(e) => console.log('[Chat] Image load error:', e.nativeEvent.error)}
                       />
-                    </View>
+                    </TouchableOpacity>
                   )}
                   {message.text && (
                     <Text style={[
@@ -645,6 +695,53 @@ export default function ChatScreen() {
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+
+      {/* Image Viewer Modal */}
+      <Modal
+        visible={imageViewerModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setImageViewerModal(false)}
+      >
+        <View style={styles.imageViewerContainer}>
+          <TouchableOpacity
+            style={styles.imageViewerBackdrop}
+            activeOpacity={1}
+            onPress={() => setImageViewerModal(false)}
+          />
+          
+          <View style={styles.imageViewerContent}>
+            {/* Close Button */}
+            <TouchableOpacity
+              style={styles.imageViewerCloseButton}
+              onPress={() => setImageViewerModal(false)}
+            >
+              <X size={28} color="#FFFFFF" />
+            </TouchableOpacity>
+
+            {/* Image */}
+            {viewingImageUrl && (
+              <Image
+                source={{ uri: viewingImageUrl }}
+                style={styles.fullImage}
+                resizeMode="contain"
+              />
+            )}
+
+            {/* Download Button */}
+            <TouchableOpacity
+              style={styles.downloadButton}
+              onPress={() => {
+                if (viewingImageUrl) {
+                  downloadImage(viewingImageUrl);
+                }
+              }}
+            >
+              <Text style={styles.downloadButtonText}>⬇ Download Image</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -744,9 +841,10 @@ const styles = StyleSheet.create({
   },
   messagesContent: {
     padding: 16,
+    minHeight: '100%',
   },
   emptyState: {
-    flex: 1,
+    minHeight: 300,
     justifyContent: 'center',
     alignItems: 'center'
   },
@@ -943,5 +1041,57 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#0369A1',
     fontWeight: '500',
+  },
+  imageViewerContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageViewerBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  imageViewerContent: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: '100%',
+    paddingHorizontal: 20,
+  },
+  imageViewerCloseButton: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    zIndex: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    borderRadius: 24,
+    width: 48,
+    height: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fullImage: {
+    width: '100%',
+    height: '70%',
+    borderRadius: 8,
+  },
+  downloadButton: {
+    position: 'absolute',
+    bottom: 40,
+    backgroundColor: '#2563EB',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginTop: 20,
+  },
+  downloadButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+    fontFamily: 'Inter-Bold',
   }
 });

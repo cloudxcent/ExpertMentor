@@ -7,6 +7,7 @@ import { storage, StorageKeys } from '../../utils/storage';
 import { db } from '../../config/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { useAuth } from '../../components/AuthWrapper';
+import { api } from '../../utils/api';
 
 interface UserProfile {
   name: string;
@@ -27,21 +28,79 @@ export default function ProfileScreen() {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [stats, setStats] = useState({
-    totalEarnings: 45750,
-    totalSessions: 156,
-    rating: 4.9,
-    reviews: 128,
-    walletBalance: 1250
+    totalEarnings: 0,
+    totalSessions: 0,
+    rating: 0,
+    reviews: 0,
+    walletBalance: 0
   });
 
   useEffect(() => {
     console.log('[Profile] Component mounted, signOut available:', typeof signOut);
     loadUserProfile();
+    loadRealTimeStats();
 
     return () => {
       // Cleanup if needed
     };
   }, []);
+
+  const loadRealTimeStats = async () => {
+    try {
+      const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
+      if (!profileData?.id) return;
+
+      // Get wallet balance
+      const walletBalance = await api.getWalletBalance(profileData.id);
+      
+      // Get session count
+      const sessionCount = await api.getUserSessionCount(profileData.id);
+      
+      // Get expert rating if user is expert
+      let rating = 0;
+      let reviews = 0;
+      if (profileData.userType === 'expert') {
+        const ratingData = await api.getExpertRating(profileData.id);
+        rating = ratingData.averageRating;
+        reviews = ratingData.totalReviews;
+
+        // Subscribe to real-time rating updates
+        api.subscribeToExpertRating(profileData.id, (ratingData) => {
+          setStats(prev => ({
+            ...prev,
+            rating: ratingData.averageRating,
+            reviews: ratingData.totalReviews,
+          }));
+        });
+
+        // Subscribe to real-time wallet updates
+        api.subscribeToWalletBalance(profileData.id, (balance) => {
+          setStats(prev => ({
+            ...prev,
+            walletBalance: balance,
+          }));
+        });
+
+        // Subscribe to real-time session updates
+        api.subscribeToUserSessionCount(profileData.id, (count) => {
+          setStats(prev => ({
+            ...prev,
+            totalSessions: count,
+          }));
+        });
+      }
+
+      setStats(prev => ({
+        ...prev,
+        walletBalance,
+        totalSessions: sessionCount,
+        rating,
+        reviews,
+      }));
+    } catch (error) {
+      console.error('[Profile] Error loading real-time stats:', error);
+    }
+  };
 
   const loadUserProfile = async () => {
     try {
@@ -66,15 +125,9 @@ export default function ProfileScreen() {
             };
             setUserProfile(updatedProfile);
             await storage.setItem(StorageKeys.USER_PROFILE, updatedProfile);
-
-            setStats(prev => ({
-              ...prev,
-              totalSessions: data.totalSessions || prev.totalSessions,
-            rating: parseFloat(data.average_rating || prev.rating.toString()),
-          }));
-        } else {
-          setUserProfile(profileData);
-        }
+          } else {
+            setUserProfile(profileData);
+          }
         } catch (err) {
           // Firestore error, just use cached profile
           console.log('Error fetching profile from Firestore:', err);

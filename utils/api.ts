@@ -376,48 +376,6 @@ export const api = {
     }
   },
 
-  async getExpertReviews(expertId: string): Promise<any[]> {
-    try {
-      const q = query(
-        collection(db, 'reviews'),
-        where('expertId', '==', expertId),
-        orderBy('createdAt', 'desc')
-      );
-
-      const querySnapshot = await getDocs(q);
-      const reviews: any[] = [];
-
-      for (const docSnap of querySnapshot.docs) {
-        const data = docSnap.data();
-
-        let clientName = 'Anonymous';
-        let clientAvatar = null;
-
-        if (data.clientId) {
-          const clientProfile = await api.getProfile(data.clientId);
-          if (clientProfile.success && clientProfile.data) {
-            clientName = clientProfile.data.name;
-            clientAvatar = clientProfile.data.avatarUrl;
-          }
-        }
-
-        reviews.push({
-          id: docSnap.id,
-          rating: data.rating,
-          comment: data.comment,
-          clientName,
-          clientAvatar,
-          createdAt: data.createdAt,
-        });
-      }
-
-      return reviews;
-    } catch (error) {
-      console.error('Error getting reviews:', error);
-      return [];
-    }
-  },
-
   async sendMessage(sessionId: string, senderId: string, receiverId: string, content: string): Promise<{ success: boolean; error?: string }> {
     try {
       await addDoc(collection(db, 'messages'), {
@@ -551,6 +509,386 @@ export const api = {
     } catch (error: any) {
       console.error('Error marking messages as read:', error);
       return { success: false };
+    }
+  },
+
+  // ========== RATING AND REVIEW APIS ==========
+
+  async createReview(reviewData: {
+    expertId: string;
+    clientId: string;
+    rating: number;
+    comment?: string;
+    sessionId?: string;
+  }): Promise<{ success: boolean; reviewId?: string; error?: string }> {
+    try {
+      const reviewRef = await addDoc(collection(db, 'reviews'), {
+        expertId: reviewData.expertId,
+        clientId: reviewData.clientId,
+        rating: reviewData.rating,
+        comment: reviewData.comment || '',
+        sessionId: reviewData.sessionId || null,
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      });
+
+      // Update expert's average rating in their profile
+      await api.updateExpertRating(reviewData.expertId);
+
+      return { success: true, reviewId: reviewRef.id };
+    } catch (error: any) {
+      console.error('Error creating review:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async getExpertReviews(expertId: string): Promise<any[]> {
+    try {
+      // Query without orderBy to avoid composite index requirement
+      const q = query(
+        collection(db, 'reviews'),
+        where('expertId', '==', expertId)
+      );
+
+      const querySnapshot = await getDocs(q);
+      const reviews: any[] = [];
+
+      for (const docSnap of querySnapshot.docs) {
+        const data = docSnap.data();
+
+        let clientName = 'Anonymous';
+        let clientAvatar = null;
+
+        try {
+          const clientProfile = await api.getProfile(data.clientId);
+          if (clientProfile.success && clientProfile.data) {
+            clientName = clientProfile.data.name;
+            clientAvatar = clientProfile.data.avatarUrl;
+          }
+        } catch (e) {
+          // Continue with anonymous if profile fetch fails
+        }
+
+        reviews.push({
+          id: docSnap.id,
+          rating: data.rating,
+          comment: data.comment,
+          clientName,
+          clientAvatar,
+          createdAt: data.createdAt?.toDate?.() || new Date(),
+          updatedAt: data.updatedAt,
+        });
+      }
+
+      // Sort client-side by createdAt descending
+      reviews.sort((a, b) => (b.createdAt?.getTime?.() || 0) - (a.createdAt?.getTime?.() || 0));
+
+      return reviews;
+    } catch (error: any) {
+      console.error('Error getting expert reviews:', error);
+      return [];
+    }
+  },
+
+  subscribeToExpertReviews(expertId: string, callback: (reviews: any[]) => void): () => void {
+    const q = query(
+      collection(db, 'reviews'),
+      where('expertId', '==', expertId)
+    );
+
+    const unsubscribe = onSnapshot(
+      q,
+      async (querySnapshot) => {
+        const reviews: any[] = [];
+
+        for (const docSnap of querySnapshot.docs) {
+          const data = docSnap.data();
+
+          let clientName = 'Anonymous';
+          let clientAvatar = null;
+
+          try {
+            const clientProfile = await api.getProfile(data.clientId);
+            if (clientProfile.success && clientProfile.data) {
+              clientName = clientProfile.data.name;
+              clientAvatar = clientProfile.data.avatarUrl;
+            }
+          } catch (e) {
+            // Continue with anonymous
+          }
+
+          reviews.push({
+            id: docSnap.id,
+            rating: data.rating,
+            comment: data.comment,
+            clientName,
+            clientAvatar,
+            createdAt: data.createdAt?.toDate?.() || new Date(),
+            updatedAt: data.updatedAt,
+          });
+        }
+
+        // Sort client-side by createdAt descending
+        reviews.sort((a, b) => (b.createdAt?.getTime?.() || 0) - (a.createdAt?.getTime?.() || 0));
+
+        callback(reviews);
+      },
+      (error) => {
+        console.warn('Error in reviews subscription:', error?.message);
+        callback([]);
+      }
+    );
+
+    return unsubscribe;
+  },
+
+  async getExpertRating(expertId: string): Promise<{ averageRating: number; totalReviews: number }> {
+    try {
+      const q = query(
+        collection(db, 'reviews'),
+        where('expertId', '==', expertId)
+      );
+
+      const querySnapshot = await getDocs(q);
+      const ratings: number[] = [];
+
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        if (data.rating) {
+          ratings.push(data.rating);
+        }
+      });
+
+      const averageRating = ratings.length > 0
+        ? Number((ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1))
+        : 0;
+
+      return {
+        averageRating,
+        totalReviews: ratings.length,
+      };
+    } catch (error: any) {
+      console.error('Error getting expert rating:', error);
+      return { averageRating: 0, totalReviews: 0 };
+    }
+  },
+
+  subscribeToExpertRating(expertId: string, callback: (rating: { averageRating: number; totalReviews: number }) => void): () => void {
+    try {
+      const q = query(
+        collection(db, 'reviews'),
+        where('expertId', '==', expertId)
+      );
+
+      const unsubscribe = onSnapshot(
+        q,
+        (querySnapshot) => {
+          try {
+            const ratings: number[] = [];
+
+            querySnapshot.forEach((doc) => {
+              const data = doc.data();
+              if (data.rating) {
+                ratings.push(data.rating);
+              }
+            });
+
+            const averageRating = ratings.length > 0
+              ? Number((ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1))
+              : 0;
+
+            console.log(`[RatingSubscription] Expert ${expertId}: ${ratings.length} reviews, avg: ${averageRating}`);
+            
+            callback({
+              averageRating,
+              totalReviews: ratings.length,
+            });
+          } catch (error) {
+            console.error('Error processing rating data:', error);
+            callback({ averageRating: 0, totalReviews: 0 });
+          }
+        },
+        (error) => {
+          console.warn('Error in rating subscription:', error?.message);
+          // Don't callback on error, just log it
+        }
+      );
+
+      return unsubscribe;
+    } catch (error) {
+      console.error('Error setting up rating subscription:', error);
+      return () => {}; // Return no-op unsubscribe
+    }
+  },
+
+  async updateExpertRating(expertId: string): Promise<{ success: boolean }> {
+    try {
+      const ratingData = await api.getExpertRating(expertId);
+      
+      await updateDoc(doc(db, 'profiles', expertId), {
+        averageRating: ratingData.averageRating,
+        totalReviews: ratingData.totalReviews,
+        updatedAt: Timestamp.now(),
+      });
+
+      return { success: true };
+    } catch (error: any) {
+      console.error('Error updating expert rating:', error);
+      return { success: false };
+    }
+  },
+
+  async getUserReviews(userId: string): Promise<any[]> {
+    try {
+      // Get reviews where this user is the reviewer - no orderBy to avoid index requirement
+      const q = query(
+        collection(db, 'reviews'),
+        where('clientId', '==', userId)
+      );
+
+      const querySnapshot = await getDocs(q);
+      const reviews: any[] = [];
+
+      for (const docSnap of querySnapshot.docs) {
+        const data = docSnap.data();
+
+        let expertName = 'Unknown Expert';
+        let expertAvatar = null;
+
+        try {
+          const expertProfile = await api.getProfile(data.expertId);
+          if (expertProfile.success && expertProfile.data) {
+            expertName = expertProfile.data.name;
+            expertAvatar = expertProfile.data.avatarUrl;
+          }
+        } catch (e) {
+          // Continue
+        }
+
+        reviews.push({
+          id: docSnap.id,
+          rating: data.rating,
+          comment: data.comment,
+          expertName,
+          expertAvatar,
+          createdAt: data.createdAt?.toDate?.() || new Date(),
+        });
+      }
+
+      // Sort client-side by createdAt descending
+      reviews.sort((a, b) => (b.createdAt?.getTime?.() || 0) - (a.createdAt?.getTime?.() || 0));
+
+      return reviews;
+    } catch (error: any) {
+      console.error('Error getting user reviews:', error);
+      return [];
+    }
+  },
+
+  async getWalletBalance(userId: string): Promise<number> {
+    try {
+      const userRef = doc(db, 'profiles', userId);
+      const docSnap = await getDoc(userRef);
+
+      if (docSnap.exists()) {
+        return docSnap.data().walletBalance || 0;
+      }
+      return 0;
+    } catch (error: any) {
+      console.error('Error getting wallet balance:', error);
+      return 0;
+    }
+  },
+
+  subscribeToWalletBalance(userId: string, callback: (balance: number) => void): () => void {
+    const userRef = doc(db, 'profiles', userId);
+
+    const unsubscribe = onSnapshot(
+      userRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          callback(docSnap.data().walletBalance || 0);
+        }
+      },
+      (error) => {
+        console.warn('Error in wallet subscription:', error?.message);
+        callback(0);
+      }
+    );
+
+    return unsubscribe;
+  },
+
+  async getUserSessionCount(userId: string): Promise<number> {
+    try {
+      const sessionsRef = collection(db, 'chat_sessions');
+      
+      // Count sessions where user is user1
+      const q1 = query(
+        sessionsRef,
+        where('user1Id', '==', userId)
+      );
+      
+      // Count sessions where user is user2
+      const q2 = query(
+        sessionsRef,
+        where('user2Id', '==', userId)
+      );
+
+      const [snapshot1, snapshot2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+      
+      // Return total sessions (unique conversations)
+      const user1Sessions = snapshot1.size;
+      const user2Sessions = snapshot2.size;
+      
+      console.log(`[SessionCount] User ${userId}: ${user1Sessions} as user1 + ${user2Sessions} as user2 = ${user1Sessions + user2Sessions} total`);
+      
+      return user1Sessions + user2Sessions;
+    } catch (error: any) {
+      console.error('Error getting session count:', error);
+      return 0;
+    }
+  },
+
+  subscribeToUserSessionCount(userId: string, callback: (count: number) => void): () => void {
+    try {
+      const sessionsRef = collection(db, 'chat_sessions');
+      
+      // Subscribe to sessions where user is user1
+      const q1 = query(
+        sessionsRef,
+        where('user1Id', '==', userId)
+      );
+
+      const unsubscribe1 = onSnapshot(
+        q1,
+        async (snapshot1) => {
+          try {
+            // Get sessions where user is user2
+            const q2 = query(
+              sessionsRef,
+              where('user2Id', '==', userId)
+            );
+            const snapshot2 = await getDocs(q2);
+            
+            const totalSessions = snapshot1.size + snapshot2.size;
+            console.log(`[SessionCount] User ${userId}: ${snapshot1.size} as user1 + ${snapshot2.size} as user2 = ${totalSessions} total`);
+            callback(totalSessions);
+          } catch (error) {
+            console.warn('Error calculating session count:', error);
+            callback(snapshot1.size);
+          }
+        },
+        (error) => {
+          console.warn('Error in session count subscription:', error?.message);
+          callback(0);
+        }
+      );
+
+      return unsubscribe1;
+    } catch (error) {
+      console.error('Error setting up session count subscription:', error);
+      return () => {}; // Return no-op unsubscribe
     }
   },
 };
