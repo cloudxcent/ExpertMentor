@@ -11,6 +11,7 @@ interface UserProfile {
   id: string;
   name: string;
   email: string;
+  mobileNumber?: string;
   bio: string;
   userType: 'expert' | 'client';
   experience?: string;
@@ -23,7 +24,9 @@ interface UserProfile {
 
 export default function ProfileEditScreen() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [email, setEmail] = useState('');
   const [name, setName] = useState('');
+  const [mobileNumber, setMobileNumber] = useState('');
   const [bio, setBio] = useState('');
   const [experience, setExperience] = useState('');
   const [expertise, setExpertise] = useState('');
@@ -40,10 +43,18 @@ export default function ProfileEditScreen() {
 
   const loadProfile = async () => {
     try {
+      // Get email from Firebase Auth
+      if (auth.currentUser?.email) {
+        console.log('[ProfileEdit] Email from Firebase Auth:', auth.currentUser.email);
+        setEmail(auth.currentUser.email);
+      }
+
+      // Get profile data from local storage
       const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
       if (profileData) {
         setProfile(profileData);
         setName(profileData.name || '');
+        setMobileNumber(profileData.mobileNumber || '');
         setBio(profileData.bio || '');
         setExperience(profileData.experience || '');
         setExpertise(profileData.expertise || '');
@@ -124,9 +135,20 @@ export default function ProfileEditScreen() {
     }
   };
 
+  const validateMobileNumber = (number: string): boolean => {
+    // Indian mobile number validation (10 digits)
+    const mobileRegex = /^[6-9]\d{9}$/;
+    return mobileRegex.test(number);
+  };
+
   const handleSave = async () => {
     if (!name.trim()) {
       Alert.alert('Error', 'Please enter your name');
+      return;
+    }
+
+    if (mobileNumber.trim() && !validateMobileNumber(mobileNumber.trim())) {
+      Alert.alert('Error', 'Please enter a valid 10-digit mobile number starting with 6-9');
       return;
     }
 
@@ -162,6 +184,7 @@ export default function ProfileEditScreen() {
       const updateData: any = {
         name: name.trim(),
         bio: bio.trim(),
+        mobileNumber: mobileNumber.trim(),
         avatarUrl: avatarUrl || null,
         updatedAt: new Date().toISOString()
       };
@@ -185,6 +208,7 @@ export default function ProfileEditScreen() {
         ...profile,
         name: name.trim(),
         bio: bio.trim(),
+        mobileNumber: mobileNumber.trim(),
         avatarUrl: avatarUrl,
         ...(profile.userType === 'expert' && {
           expertise: expertise.trim(),
@@ -257,6 +281,14 @@ export default function ProfileEditScreen() {
         {/* Profile Fields */}
         <View style={styles.formSection}>
           <View style={styles.fieldGroup}>
+            <Text style={styles.label}>Login Email (from account)</Text>
+            <View style={[styles.input, styles.readOnlyInput]}>
+              <Text style={styles.readOnlyText}>{email || 'Loading...'}</Text>
+            </View>
+            <Text style={styles.helperText}>This is your login email and cannot be changed here</Text>
+          </View>
+
+          <View style={styles.fieldGroup}>
             <Text style={styles.label}>Name *</Text>
             <TextInput
               style={styles.input}
@@ -265,6 +297,20 @@ export default function ProfileEditScreen() {
               onChangeText={setName}
               placeholderTextColor="#D1D5DB"
             />
+          </View>
+
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>Mobile Number</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="10-digit mobile number (e.g., 9876543210)"
+              value={mobileNumber}
+              onChangeText={setMobileNumber}
+              placeholderTextColor="#D1D5DB"
+              keyboardType="phone-pad"
+              maxLength={10}
+            />
+            <Text style={styles.helperText}>Format: 10 digits starting with 6-9</Text>
           </View>
 
           <View style={styles.fieldGroup}>
@@ -461,6 +507,22 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#1F2937',
     backgroundColor: '#F9FAFB'
+  },
+  readOnlyInput: {
+    backgroundColor: '#E5E7EB',
+    borderColor: '#9CA3AF',
+    justifyContent: 'center',
+  },
+  readOnlyText: {
+    fontSize: 14,
+    color: '#4B5563',
+    fontWeight: '500'
+  },
+  helperText: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 4,
+    fontStyle: 'italic'
   },
   bioInput: {
     height: 100

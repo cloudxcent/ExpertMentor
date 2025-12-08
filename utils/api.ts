@@ -19,6 +19,7 @@ interface ProfileData {
   name: string;
   bio: string;
   email?: string;
+  mobileNumber?: string;
   experience?: string;
   expertise?: string;
   industry?: string;
@@ -33,6 +34,7 @@ export const api = {
     try {
       await setDoc(doc(db, 'profiles', userId), {
         email: profileData.email || '',
+        mobileNumber: profileData.mobileNumber || '',
         name: profileData.name,
         bio: profileData.bio,
         userType: profileData.userType,
@@ -68,6 +70,7 @@ export const api = {
           data: {
             id: docSnap.id,
             email: data.email,
+            mobileNumber: data.mobileNumber,
             name: data.name,
             bio: data.bio,
             userType: data.userType,
@@ -101,6 +104,7 @@ export const api = {
 
       if (profileData.name) updateData.name = profileData.name;
       if (profileData.bio !== undefined) updateData.bio = profileData.bio;
+      if (profileData.mobileNumber !== undefined) updateData.mobileNumber = profileData.mobileNumber;
       if (profileData.experience) updateData.experience = profileData.experience;
       if (profileData.expertise) updateData.expertise = profileData.expertise;
       if (profileData.industry) updateData.industry = profileData.industry;
@@ -889,6 +893,77 @@ export const api = {
     } catch (error) {
       console.error('Error setting up session count subscription:', error);
       return () => {}; // Return no-op unsubscribe
+    }
+  },
+
+  // Account deletion request functions
+  async createDeletionRequest(userId: string, verificationCode: string, expiryTime: number): Promise<{ success: boolean; requestId?: string; error?: string }> {
+    try {
+      const deletionRequest = {
+        userId,
+        verificationCode,
+        createdAt: Timestamp.now(),
+        expiresAt: new Date(expiryTime),
+        status: 'pending_verification'
+      };
+
+      const docRef = await addDoc(collection(db, 'deletion_requests'), deletionRequest);
+      console.log('[DeletionRequest] Created deletion request:', docRef.id);
+      return { success: true, requestId: docRef.id };
+    } catch (error: any) {
+      console.error('[DeletionRequest] Error creating deletion request:', error);
+      return { success: false, error: error.message || 'Failed to create deletion request' };
+    }
+  },
+
+  async getDeletionRequest(userId: string): Promise<{ success: boolean; data?: any; error?: string }> {
+    try {
+      const q = query(
+        collection(db, 'deletion_requests'),
+        where('userId', '==', userId),
+        where('status', '==', 'pending_verification'),
+        limit(1)
+      );
+
+      const snapshot = await getDocs(q);
+      if (snapshot.empty) {
+        return { success: true, data: null };
+      }
+
+      const requestData = snapshot.docs[0].data();
+      console.log('[DeletionRequest] Retrieved deletion request:', requestData);
+      return { success: true, data: { id: snapshot.docs[0].id, ...requestData } };
+    } catch (error: any) {
+      console.error('[DeletionRequest] Error getting deletion request:', error);
+      return { success: false, error: error.message || 'Failed to get deletion request' };
+    }
+  },
+
+  async completeDeletionRequest(requestId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      await updateDoc(doc(db, 'deletion_requests', requestId), {
+        status: 'completed',
+        completedAt: Timestamp.now()
+      });
+      console.log('[DeletionRequest] Marked deletion request as completed:', requestId);
+      return { success: true };
+    } catch (error: any) {
+      console.error('[DeletionRequest] Error completing deletion request:', error);
+      return { success: false, error: error.message || 'Failed to complete deletion request' };
+    }
+  },
+
+  async cancelDeletionRequest(requestId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      await updateDoc(doc(db, 'deletion_requests', requestId), {
+        status: 'cancelled',
+        cancelledAt: Timestamp.now()
+      });
+      console.log('[DeletionRequest] Cancelled deletion request:', requestId);
+      return { success: true };
+    } catch (error: any) {
+      console.error('[DeletionRequest] Error cancelling deletion request:', error);
+      return { success: false, error: error.message || 'Failed to cancel deletion request' };
     }
   },
 };

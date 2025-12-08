@@ -55,6 +55,14 @@ service cloud.firestore {
       allow update: if request.auth != null;
     }
 
+    // Account Deletion Requests - for 48-hour verification period
+    match /deletion_requests/{requestId} {
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
     // Default allow read for authenticated users (for browsing experts, etc)
     // Default deny write for other collections
     match /{document=**} {
