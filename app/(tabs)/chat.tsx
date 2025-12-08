@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Image, ActivityIndicator, Badge, Alert } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { MessageCircle, Clock, AlertCircle, Phone } from 'lucide-react-native';
+import { MessageCircle, Clock, AlertCircle, Phone, Camera } from 'lucide-react-native';
 import { db } from '../../config/firebase';
 import { collection, onSnapshot, getDoc, doc, getDocs, query, orderBy, where } from 'firebase/firestore';
 import { auth } from '../../config/firebase';
@@ -245,11 +245,13 @@ export default function ChatTabScreen() {
             ]}>
               {session.otherUserName}
             </Text>
-            <View style={styles.countContainer}>
-              <Text style={styles.messageCount}>
-                {session.messageCount || 0} msg{session.messageCount !== 1 ? 's' : ''}
-              </Text>
-            </View>
+            {session.messageCount > 0 && (
+              <View style={styles.countContainer}>
+                <Text style={styles.messageCount}>
+                  {session.messageCount} msg{session.messageCount !== 1 ? 's' : ''}
+                </Text>
+              </View>
+            )}
           </View>
           <Text style={[
             styles.lastMessage,
@@ -286,7 +288,7 @@ export default function ChatTabScreen() {
           style={styles.videoCallButton}
           onPress={() => startCall(session, 'video')}
         >
-          <Phone size={18} color="#3B82F6" />
+          <Camera size={18} color="#3B82F6" />
         </TouchableOpacity>
       </View>
     </View>

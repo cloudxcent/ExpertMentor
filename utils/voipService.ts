@@ -1,7 +1,8 @@
 import { Audio } from 'expo-av';
 
-// Agora configuration
-const AGORA_APP_ID = process.env.EXPO_PUBLIC_AGORA_APP_ID || 'your_agora_app_id';
+// Agora configuration from environment
+export const AGORA_APP_ID = process.env.EXPO_PUBLIC_AGORA_APP_ID || '';
+export const AGORA_TEMP_TOKEN = process.env.EXPO_PUBLIC_AGORA_TEMP_TOKEN || '';
 
 interface VoIPConfig {
   appId: string;
@@ -19,7 +20,14 @@ interface CallStats {
 
 /**
  * VoIPService handles Agora RTC Engine operations
- * Note: For production, use native Agora SDK or implement WebRTC solution
+ * 
+ * IMPORTANT: This is currently a MOCK implementation
+ * For real voice calling, you need to:
+ * 1. Install react-native-agora SDK
+ * 2. Integrate native Agora RTC Engine
+ * 3. Use AGORA_APP_ID and AGORA_TEMP_TOKEN from environment
+ * 
+ * See AGORA_SETUP_GUIDE.md for complete setup instructions
  */
 class VoIPService {
   private isInitialized: boolean = false;
@@ -33,17 +41,35 @@ class VoIPService {
     bitrate: 0,
   };
 
+  constructor() {
+    console.log('[VoIP] VoIPService initialized (MOCK MODE - Real Agora SDK needed for voice)');
+    console.log('[VoIP] App ID:', AGORA_APP_ID ? '✓ Configured' : '✗ Missing');
+    console.log('[VoIP] Token:', AGORA_TEMP_TOKEN ? '✓ Configured' : '✗ Missing');
+  }
+
   /**
    * Initialize the VoIP Service
    */
   async initialize(appId: string): Promise<boolean> {
     try {
       console.log('[VoIP] Initializing VoIP Service...');
+      console.log('[VoIP] Using App ID:', AGORA_APP_ID || appId);
+      
+      if (!AGORA_APP_ID && !appId) {
+        console.error('[VoIP] ✗ No Agora App ID configured');
+        console.error('[VoIP] Add EXPO_PUBLIC_AGORA_APP_ID to .env.local');
+        return false;
+      }
+
+      if (!AGORA_TEMP_TOKEN) {
+        console.warn('[VoIP] ⚠ No temporary token configured');
+        console.warn('[VoIP] Add EXPO_PUBLIC_AGORA_TEMP_TOKEN to .env.local');
+      }
       
       // Request audio permissions
       const { status } = await Audio.requestPermissionsAsync();
       if (status !== 'granted') {
-        console.error('[VoIP] Audio permission not granted');
+        console.error('[VoIP] ✗ Audio permission not granted');
         return false;
       }
 
@@ -370,5 +396,3 @@ class VoIPService {
 
 // Export singleton instance
 export const voipService = new VoIPService();
-
-export { VoIPConfig, CallStats, AGORA_APP_ID };

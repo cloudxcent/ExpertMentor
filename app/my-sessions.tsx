@@ -39,6 +39,7 @@ export default function MySessionsScreen() {
   const [scheduledSessions, setScheduledSessions] = useState<ScheduledSession[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [userProfile, setUserProfile] = useState<any>(null);
+  const unsubscribeRef = React.useRef<(() => void) | null>(null);
 
   const loadUserAndSessions = async () => {
     try {
@@ -59,27 +60,13 @@ export default function MySessionsScreen() {
         
         // Create queries for sessions where user is user1 or user2
         const q1 = query(sessionsRef, where('user1Id', '==', profileData.id));
-        const q2 = query(sessionsRef, where('user2Id', '==', profileData.id));
         
         // Subscribe to user1 sessions
         const unsubscribe1 = onSnapshot(q1, async (snapshot1) => {
           console.log('[MySessions] User1 sessions:', snapshot1.size);
           const activeSessions: ChatSession[] = [];
 
-          const allDocs = [
-            ...snapshot1.docs,
-          ];
-
-          // Also get user2 sessions
-          try {
-            const snapshot2 = await getDocs(q2);
-            console.log('[MySessions] User2 sessions:', snapshot2.size);
-            allDocs.push(...snapshot2.docs);
-          } catch (err) {
-            console.warn('[MySessions] Error fetching user2 sessions:', err);
-          }
-
-          for (const docSnap of allDocs) {
+          for (const docSnap of snapshot1.docs) {
             const sessionData = docSnap.data();
             const { user1Id, user2Id, createdAt, lastMessageAt } = sessionData;
 
@@ -143,23 +130,93 @@ export default function MySessionsScreen() {
             }
           }
 
+          // Also get user2 sessions
+          const q2 = query(sessionsRef, where('user2Id', '==', profileData.id));
+          try {
+            const snapshot2 = await getDocs(q2);
+            console.log('[MySessions] User2 sessions:', snapshot2.size);
+
+            for (const docSnap of snapshot2.docs) {
+              const sessionData = docSnap.data();
+              const { user1Id, user2Id, createdAt, lastMessageAt } = sessionData;
+
+              const otherUserId = user1Id === profileData.id ? user2Id : user1Id;
+
+              try {
+                const otherUserRef = doc(db, 'profiles', otherUserId);
+                const otherUserSnap = await getDoc(otherUserRef);
+
+                if (otherUserSnap.exists()) {
+                  const otherUserData = otherUserSnap.data();
+                  
+                  const messagesRef = collection(db, 'chat_sessions', docSnap.id, 'messages');
+                  const messagesQuery = query(messagesRef, orderBy('timestamp', 'desc'));
+                  
+                  try {
+                    const messagesSnap = await getDocs(messagesQuery);
+                    let lastMessage = '';
+                    let lastTime = lastMessageAt;
+                    const messageCount = messagesSnap.docs.length;
+
+                    if (messagesSnap.docs.length > 0) {
+                      const lastMsg = messagesSnap.docs[0].data();
+                      lastMessage = lastMsg.text?.substring(0, 50) || '';
+                      lastTime = lastMsg.timestamp || lastMessageAt;
+                    }
+
+                    activeSessions.push({
+                      id: docSnap.id,
+                      user1Id,
+                      user2Id,
+                      otherUserId,
+                      otherUserName: otherUserData.name || 'Unknown',
+                      otherUserImage: ensureMediaUrl(otherUserData.avatarUrl),
+                      lastMessage: lastMessage || 'No messages yet',
+                      lastMessageAt: lastTime,
+                      createdAt,
+                      messageCount
+                    });
+                  } catch (msgErr) {
+                    console.log('[MySessions] No messages in user2 session yet');
+                    activeSessions.push({
+                      id: docSnap.id,
+                      user1Id,
+                      user2Id,
+                      otherUserId,
+                      otherUserName: otherUserData.name || 'Unknown',
+                      otherUserImage: ensureMediaUrl(otherUserData.avatarUrl),
+                      lastMessage: 'No messages yet',
+                      lastMessageAt,
+                      createdAt,
+                      messageCount: 0
+                    });
+                  }
+                }
+              } catch (err) {
+                console.error('[MySessions] Error fetching user2 profile:', err);
+              }
+            }
+          } catch (err) {
+            console.warn('[MySessions] Error fetching user2 sessions:', err);
+          }
+
           console.log('[MySessions] ✓ Loaded', activeSessions.length, 'sessions');
           setSessions(activeSessions.sort((a, b) => {
             const timeA = a.lastMessageAt?.toDate?.() || new Date(a.lastMessageAt || 0);
             const timeB = b.lastMessageAt?.toDate?.() || new Date(b.lastMessageAt || 0);
             return timeB.getTime() - timeA.getTime();
           }));
+          setIsLoading(false);
         }, (error: any) => {
           console.error('[MySessions] ✗ Listener error:', error?.code || error?.message || error);
+          setIsLoading(false);
         });
 
-        return () => unsubscribe1();
+        unsubscribeRef.current = unsubscribe1;
       } else {
         // Load expert sessions
         loadExpertSessions(profileData.id);
       }
-      
-      setIsLoading(false);
     } catch (error) {
       console.error('[MySessions] ✗ Error loading sessions:', error);
       setIsLoading(false);
@@ -168,54 +225,173 @@ export default function MySessionsScreen() {
 
   const loadExpertSessions = async (expertId: string) => {
     try {
-      const sessionsRef = collection(db, 'sessions');
-      const q = query(sessionsRef, where('expertId', '==', expertId), orderBy('scheduledAt', 'desc'));
+      // Query chat_sessions where expert is expert (one side) or user2 (other side)
+      const sessionsRef = collection(db, 'chat_sessions');
       
-      const unsubscribe = onSnapshot(q, async (snapshot) => {
+      // Get sessions where user is user1 (expert side)
+      const q1 = query(sessionsRef, where('user1Id', '==', expertId));
+      
+      // Subscribe to sessions
+      const unsubscribe1 = onSnapshot(q1, async (snapshot1) => {
+        console.log('[MySessions] Expert chat sessions (as user1):', snapshot1.size);
         const expert_sessions: ScheduledSession[] = [];
 
-        for (const docSnap of snapshot.docs) {
+        // Process user1 sessions
+        for (const docSnap of snapshot1.docs) {
           const sessionData = docSnap.data();
-          
-          try {
-            const clientRef = doc(db, 'profiles', sessionData.clientId);
-            const clientSnap = await getDoc(clientRef);
+          const { user1Id, user2Id, createdAt, lastMessageAt } = sessionData;
 
-            if (clientSnap.exists()) {
-              const clientData = clientSnap.data();
-              expert_sessions.push({
-                id: docSnap.id,
-                clientId: sessionData.clientId,
-                clientName: clientData.name || 'Unknown',
-                clientImage: ensureMediaUrl(clientData.avatarUrl),
-                type: sessionData.type || 'chat',
-                status: sessionData.status || 'scheduled',
-                duration: sessionData.duration || 0,
-                cost: sessionData.cost || 0,
-                rating: sessionData.rating,
-                scheduledAt: sessionData.scheduledAt,
-                completedAt: sessionData.completedAt
-              });
+          const otherUserId = user1Id === expertId ? user2Id : user1Id;
+
+          try {
+            const otherUserRef = doc(db, 'profiles', otherUserId);
+            const otherUserSnap = await getDoc(otherUserRef);
+
+            if (otherUserSnap.exists()) {
+              const otherUserData = otherUserSnap.data();
+              
+              // Get message count
+              const messagesRef = collection(db, 'chat_sessions', docSnap.id, 'messages');
+              const messagesQuery = query(messagesRef, orderBy('timestamp', 'desc'));
+              
+              try {
+                const messagesSnap = await getDocs(messagesQuery);
+                const messageCount = messagesSnap.docs.length;
+
+                expert_sessions.push({
+                  id: docSnap.id,
+                  clientId: otherUserId,
+                  clientName: otherUserData.name || 'Unknown',
+                  clientImage: ensureMediaUrl(otherUserData.avatarUrl),
+                  type: 'chat',
+                  status: 'active',
+                  duration: 0,
+                  cost: 0,
+                  rating: 0,
+                  scheduledAt: lastMessageAt || createdAt,
+                  completedAt: lastMessageAt
+                });
+              } catch (msgErr) {
+                console.log('[MySessions] No messages in user1 session yet');
+                expert_sessions.push({
+                  id: docSnap.id,
+                  clientId: otherUserId,
+                  clientName: otherUserData.name || 'Unknown',
+                  clientImage: ensureMediaUrl(otherUserData.avatarUrl),
+                  type: 'chat',
+                  status: 'active',
+                  duration: 0,
+                  cost: 0,
+                  rating: 0,
+                  scheduledAt: createdAt,
+                  completedAt: lastMessageAt
+                });
+              }
             }
           } catch (err) {
-            console.error('[MySessions] Error fetching client profile:', err);
+            console.error('[MySessions] Error fetching user profile for user1:', err);
           }
         }
 
+        // Also get sessions where user is user2
+        const q2 = query(sessionsRef, where('user2Id', '==', expertId));
+        try {
+          const snapshot2 = await getDocs(q2);
+          console.log('[MySessions] Expert chat sessions (as user2):', snapshot2.size);
+
+          for (const docSnap of snapshot2.docs) {
+            const sessionData = docSnap.data();
+            const { user1Id, user2Id, createdAt, lastMessageAt } = sessionData;
+
+            const otherUserId = user1Id === expertId ? user2Id : user1Id;
+
+            try {
+              const otherUserRef = doc(db, 'profiles', otherUserId);
+              const otherUserSnap = await getDoc(otherUserRef);
+
+              if (otherUserSnap.exists()) {
+                const otherUserData = otherUserSnap.data();
+                
+                const messagesRef = collection(db, 'chat_sessions', docSnap.id, 'messages');
+                const messagesQuery = query(messagesRef, orderBy('timestamp', 'desc'));
+                
+                try {
+                  const messagesSnap = await getDocs(messagesQuery);
+                  const messageCount = messagesSnap.docs.length;
+
+                  expert_sessions.push({
+                    id: docSnap.id,
+                    clientId: otherUserId,
+                    clientName: otherUserData.name || 'Unknown',
+                    clientImage: ensureMediaUrl(otherUserData.avatarUrl),
+                    type: 'chat',
+                    status: 'active',
+                    duration: 0,
+                    cost: 0,
+                    rating: 0,
+                    scheduledAt: lastMessageAt || createdAt,
+                    completedAt: lastMessageAt
+                  });
+                } catch (msgErr) {
+                  console.log('[MySessions] No messages in user2 session yet');
+                  expert_sessions.push({
+                    id: docSnap.id,
+                    clientId: otherUserId,
+                    clientName: otherUserData.name || 'Unknown',
+                    clientImage: ensureMediaUrl(otherUserData.avatarUrl),
+                    type: 'chat',
+                    status: 'active',
+                    duration: 0,
+                    cost: 0,
+                    rating: 0,
+                    scheduledAt: createdAt,
+                    completedAt: lastMessageAt
+                  });
+                }
+              }
+            } catch (err) {
+              console.error('[MySessions] Error fetching user profile for user2:', err);
+            }
+          }
+        } catch (err) {
+          console.warn('[MySessions] Error fetching user2 sessions:', err);
+        }
+
+        // Sort by last message time (most recent first)
+        expert_sessions.sort((a, b) => {
+          const timeA = a.scheduledAt?.toDate?.() || new Date(a.scheduledAt || 0);
+          const timeB = b.scheduledAt?.toDate?.() || new Date(b.scheduledAt || 0);
+          return timeB.getTime() - timeA.getTime();
+        });
+
+        console.log('[MySessions] ✓ Loaded', expert_sessions.length, 'expert chat sessions');
         setScheduledSessions(expert_sessions);
+        setIsLoading(false);
       }, (error: any) => {
         console.error('[MySessions] ✗ Expert listener error:', error);
+        setIsLoading(false);
       });
 
-      return () => unsubscribe();
+      unsubscribeRef.current = unsubscribe1;
     } catch (error) {
       console.error('[MySessions] Error loading expert sessions:', error);
+      setIsLoading(false);
     }
   };
 
   useFocusEffect(
     React.useCallback(() => {
+      console.log('[MySessions] Screen focused, loading data');
       loadUserAndSessions();
+
+      // Cleanup on unfocus
+      return () => {
+        if (unsubscribeRef.current) {
+          console.log('[MySessions] Unsubscribing from listener');
+          unsubscribeRef.current();
+          unsubscribeRef.current = null;
+        }
+      };
     }, [])
   );
 

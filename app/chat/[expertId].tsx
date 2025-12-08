@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Image, KeyboardAvoidingView, Platform, ActivityIndicator, Modal, FlatList } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Send, Phone, Video, MoreVertical, Wallet, Plus, Smile, ImagePlus, X } from 'lucide-react-native';
+import { ArrowLeft, Send, Phone, Camera, MoreVertical, Wallet, Plus, Smile, ImagePlus, X } from 'lucide-react-native';
 import { db, auth } from '../../config/firebase';
 import { collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, getDoc, doc, setDoc, getDocs, updateDoc } from 'firebase/firestore';
 import { storage, StorageKeys } from '../../utils/storage';
@@ -494,13 +494,13 @@ export default function ChatScreen() {
         </View>
 
         <View style={styles.headerActions}>
-          <TouchableOpacity style={styles.iconButton} onPress={startVoiceCall}>
-            <Phone size={20} color="#1F2937" />
+          <TouchableOpacity style={styles.callButton} onPress={startVoiceCall}>
+            <Phone size={20} color="#FFFFFF" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.iconButton} onPress={startVideoCall}>
-            <Video size={20} color="#1F2937" />
+          <TouchableOpacity style={styles.videoCallButton} onPress={startVideoCall}>
+            <Camera size={20} color="#FFFFFF" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.iconButton}>
+          <TouchableOpacity style={styles.moreButton}>
             <MoreVertical size={20} color="#1F2937" />
           </TouchableOpacity>
         </View>
@@ -811,6 +811,40 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   iconButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  callButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#10B981',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  videoCallButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#3B82F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  moreButton: {
     width: 36,
     height: 36,
     borderRadius: 18,
