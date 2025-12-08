@@ -19,4 +19,9 @@ config.server = {
   },
 };
 
+// Optimize for web and native builds
+config.resolver.extraNodeModules = {
+  'react-native': require.resolve('react-native-web'),
+};
+
 module.exports = config;

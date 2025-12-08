@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Image, ActivityIndicator, Badge } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Image, ActivityIndicator, Badge, Alert } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { MessageCircle, Clock, AlertCircle } from 'lucide-react-native';
+import { MessageCircle, Clock, AlertCircle, Phone } from 'lucide-react-native';
 import { db } from '../../config/firebase';
 import { collection, onSnapshot, getDoc, doc, getDocs, query, orderBy, where } from 'firebase/firestore';
+import { auth } from '../../config/firebase';
 import { storage, StorageKeys } from '../../utils/storage';
 import { ensureMediaUrl } from '../../utils/firebaseStorageUrl';
 
@@ -187,70 +188,108 @@ export default function ChatTabScreen() {
     });
   };
 
+  const startCall = (session: ChatSession, callType: 'audio' | 'video') => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      Alert.alert('Error', 'User not authenticated');
+      return;
+    }
+
+    router.push({
+      pathname: '/call/[expertId]',
+      params: {
+        expertId: session.otherUserId,
+        expertName: session.otherUserName,
+        expertImage: session.otherUserImage || '',
+        callType: callType,
+        callRate: '50', // Default call rate
+        fromChat: 'true',
+        chatSessionId: 'temp_id' // Will be updated later
+      }
+    });
+  };
+
   const activeSessions = sessions.filter(s => s.isActive);
   const historySessions = sessions.filter(s => !s.isActive);
 
   const displaySessions = activeTab === 'active' ? activeSessions : historySessions;
 
   const SessionCard = ({ session }: { session: ChatSession }) => (
-    <TouchableOpacity
-      style={[
-        styles.sessionCard,
-        session.unreadCount && session.unreadCount > 0 && styles.sessionCardUnread
-      ]}
-      onPress={() => openChat(session)}
-    >
-      <View style={styles.avatarContainer}>
-        <Image
-          source={{
-            uri: session.otherUserImage || 'https://images.pexels.com/photos/3778603/pexels-photo-3778603.jpeg?auto=compress&cs=tinysrgb&w=400'
-          }}
-          style={styles.avatar}
-        />
-        {session.unreadCount && session.unreadCount > 0 && (
-          <View style={styles.unreadBadge}>
-            <Text style={styles.unreadBadgeText}>{session.unreadCount}</Text>
-          </View>
-        )}
-      </View>
-      
-      <View style={styles.sessionInfo}>
-        <View style={styles.userNameRow}>
-          <Text style={[
-            styles.userName,
-            session.unreadCount && session.unreadCount > 0 && styles.userNameUnread
-          ]}>
-            {session.otherUserName}
-          </Text>
-          <View style={styles.countContainer}>
-            <Text style={styles.messageCount}>
-              {session.messageCount || 0} msg{session.messageCount !== 1 ? 's' : ''}
-            </Text>
-          </View>
-        </View>
-        <Text style={[
-          styles.lastMessage,
-          session.unreadCount && session.unreadCount > 0 && styles.lastMessageUnread
-        ]} numberOfLines={1}>
-          {session.lastMessage || 'No messages yet'}
-        </Text>
-        <View style={styles.chatStatusRow}>
-          <Text style={styles.chatStatus}>
-            {session.messageCount === 0 ? '📋 New Chat' : '💬 Active Chat'}
-          </Text>
+    <View style={[
+      styles.sessionCard,
+      session.unreadCount && session.unreadCount > 0 && styles.sessionCardUnread
+    ]}>
+      <TouchableOpacity 
+        style={styles.sessionTouchable}
+        onPress={() => openChat(session)}
+      >
+        <View style={styles.avatarContainer}>
+          <Image
+            source={{
+              uri: session.otherUserImage || 'https://images.pexels.com/photos/3778603/pexels-photo-3778603.jpeg?auto=compress&cs=tinysrgb&w=400'
+            }}
+            style={styles.avatar}
+          />
           {session.unreadCount && session.unreadCount > 0 && (
-            <View style={styles.unreadIndicator}>
-              <AlertCircle size={14} color="#EF4444" />
-              <Text style={styles.unreadIndicatorText}>{session.unreadCount} unread</Text>
+            <View style={styles.unreadBadge}>
+              <Text style={styles.unreadBadgeText}>{session.unreadCount}</Text>
             </View>
           )}
         </View>
-      </View>
+        
+        <View style={styles.sessionInfo}>
+          <View style={styles.userNameRow}>
+            <Text style={[
+              styles.userName,
+              session.unreadCount && session.unreadCount > 0 && styles.userNameUnread
+            ]}>
+              {session.otherUserName}
+            </Text>
+            <View style={styles.countContainer}>
+              <Text style={styles.messageCount}>
+                {session.messageCount || 0} msg{session.messageCount !== 1 ? 's' : ''}
+              </Text>
+            </View>
+          </View>
+          <Text style={[
+            styles.lastMessage,
+            session.unreadCount && session.unreadCount > 0 && styles.lastMessageUnread
+          ]} numberOfLines={1}>
+            {session.lastMessage || 'No messages yet'}
+          </Text>
+          <View style={styles.chatStatusRow}>
+            <Text style={styles.chatStatus}>
+              {session.messageCount === 0 ? '📋 New Chat' : '💬 Active Chat'}
+            </Text>
+            {session.unreadCount && session.unreadCount > 0 && (
+              <View style={styles.unreadIndicator}>
+                <AlertCircle size={14} color="#EF4444" />
+                <Text style={styles.unreadIndicatorText}>{session.unreadCount} unread</Text>
+              </View>
+            )}
+          </View>
+        </View>
 
-      <View style={styles.timeInfo}>
-        <Text style={styles.timeText}>{formatTime(session.lastMessageAt)}</Text>
+        <View style={styles.timeInfo}>
+          <Text style={styles.timeText}>{formatTime(session.lastMessageAt)}</Text>
+        </View>
+      </TouchableOpacity>
+
+      <View style={styles.callButtonsContainer}>
+        <TouchableOpacity 
+          style={styles.callButton}
+          onPress={() => startCall(session, 'audio')}
+        >
+          <Phone size={18} color="#10B981" />
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={styles.videoCallButton}
+          onPress={() => startCall(session, 'video')}
+        >
+          <Phone size={18} color="#3B82F6" />
+        </TouchableOpacity>
       </View>
-    </TouchableOpacity>
+    </View>
   );
 
   return (
@@ -527,5 +566,36 @@ const styles = StyleSheet.create({
   timeText: {
     fontSize: 12,
     color: '#9CA3AF'
+  },
+  sessionTouchable: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  callButtonsContainer: {
+    flexDirection: 'row',
+    gap: 8,
+    marginLeft: 12,
+    alignItems: 'center'
+  },
+  callButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#D1FAE5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#10B981'
+  },
+  videoCallButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#DBEAFE',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#3B82F6'
   }
 });

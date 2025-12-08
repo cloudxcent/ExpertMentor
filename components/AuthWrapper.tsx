@@ -2,6 +2,7 @@ import React, { useEffect, useState, createContext, useContext, ReactNode } from
 import { auth } from '../config/firebase';
 import { onAuthStateChanged, signOut as firebaseSignOut, User } from 'firebase/auth';
 import { storage, StorageKeys } from '../utils/storage';
+import { callListenerService } from '../utils/callListenerService';
 
 interface AuthContextType {
   user: User | null;
@@ -37,10 +38,18 @@ export default function AuthWrapper({ children }: AuthWrapperProps) {
           // User is logged in
           console.log('[AuthWrapper] ✓ User logged in:', firebaseUser.email);
           setUser(firebaseUser);
+          
+          // Start listening for incoming calls
+          console.log('[AuthWrapper] Starting call listener...');
+          callListenerService.startListening();
         } else {
           // User is logged out
           console.log('[AuthWrapper] ✓ User logged out');
           setUser(null);
+          
+          // Stop listening for incoming calls
+          console.log('[AuthWrapper] Stopping call listener...');
+          callListenerService.stopListening();
 
           // Clear storage
           try {
@@ -61,6 +70,7 @@ export default function AuthWrapper({ children }: AuthWrapperProps) {
     return () => {
       console.log('[AuthWrapper] Cleaning up auth listener');
       unsubscribe();
+      callListenerService.stopListening();
     };
   }, []);
 

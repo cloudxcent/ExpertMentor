@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Image, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Image, ActivityIndicator, Alert } from 'react-native';
 import { Search, Filter, Star, Clock, Phone, MessageCircle } from 'lucide-react-native';
 import { router } from 'expo-router';
-import { db } from '../../config/firebase';
+import { db, auth } from '../../config/firebase';
 import { collection, query, where, orderBy, getDocs } from 'firebase/firestore';
 import { storage, StorageKeys } from '../../utils/storage';
 
@@ -214,6 +214,25 @@ export default function SearchScreen() {
     return matchesSearch && matchesIndustry && matchesOnline;
   });
 
+  const startCall = (expert: Expert, callType: 'audio' | 'video') => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      Alert.alert('Error', 'User not authenticated');
+      return;
+    }
+
+    router.push({
+      pathname: '/call/[expertId]',
+      params: {
+        expertId: expert.id,
+        expertName: expert.name,
+        expertImage: expert.image,
+        callType: callType,
+        callRate: expert.callRate.toString()
+      }
+    });
+  };
+
   const ExpertCard = ({ expert }: { expert: Expert }) => (
     <TouchableOpacity 
       style={styles.expertCard}
@@ -262,7 +281,7 @@ export default function SearchScreen() {
         </TouchableOpacity>
         <TouchableOpacity 
           style={styles.callButton}
-          onPress={() => router.push(`/expert-detail/${expert.id}`)}
+          onPress={() => startCall(expert, 'audio')}
         >
           <Phone size={16} color="#059669" />
           <Text style={styles.callButtonText}>₹{expert.callRate}/min</Text>

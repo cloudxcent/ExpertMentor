@@ -37,6 +37,7 @@ export default function RootLayout() {
         <Stack.Screen name="notifications" options={{ headerShown: false }} />
         <Stack.Screen name="profile-edit" options={{ headerShown: false }} />
         <Stack.Screen name="quick-actions" options={{ headerShown: false }} />
+        <Stack.Screen name="incoming-call" options={{ headerShown: false, animationEnabled: false }} />
         <Stack.Screen name="+not-found" />
       </Stack>
       <StatusBar style="auto" />

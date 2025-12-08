@@ -966,4 +966,283 @@ export const api = {
       return { success: false, error: error.message || 'Failed to cancel deletion request' };
     }
   },
+
+  // ========== CALL MANAGEMENT APIS ==========
+
+  async initializeCallSession(
+    callerId: string,
+    callerName: string,
+    calleeId: string,
+    calleeName: string,
+    callType: 'audio' | 'video' = 'audio',
+    callerImage?: string,
+    calleeImage?: string,
+    callRate?: number
+  ): Promise<{ success: boolean; sessionId?: string; channelName?: string; error?: string }> {
+    try {
+      const channelName = `${callerId}_${calleeId}_${Date.now()}`;
+      const sessionId = `call_${Date.now()}`;
+
+      const callSession = {
+        id: sessionId,
+        callerId,
+        callerName,
+        callerImage: callerImage || '',
+        calleeId,
+        calleeName,
+        calleeImage: calleeImage || '',
+        callType,
+        status: 'initiated',
+        channelName,
+        callRate: callRate || 0,
+        duration: 0,
+        totalCost: 0,
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      };
+
+      await setDoc(doc(db, 'call_sessions', sessionId), callSession);
+
+      // Create notification for the callee
+      await api.createNotification(
+        calleeId,
+        'incoming_call',
+        `Call from ${callerName}`,
+        `${callerName} is calling you...`,
+        {
+          sessionId,
+          callerId,
+          callerName,
+          callType,
+        }
+      );
+
+      console.log('[CallAPI] Call session initialized:', sessionId);
+      return { success: true, sessionId, channelName };
+    } catch (error: any) {
+      console.error('[CallAPI] Error initializing call session:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async getCallSession(sessionId: string): Promise<{ success: boolean; data?: any; error?: string }> {
+    try {
+      const docRef = doc(db, 'call_sessions', sessionId);
+      const docSnap = await getDoc(docRef);
+
+      if (docSnap.exists()) {
+        console.log('[CallAPI] Call session retrieved');
+        return { success: true, data: docSnap.data() };
+      } else {
+        return { success: false, error: 'Call session not found' };
+      }
+    } catch (error: any) {
+      console.error('[CallAPI] Error getting call session:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async updateCallSessionStatus(
+    sessionId: string,
+    status: string,
+    additionalData?: Record<string, any>
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const updateData: any = {
+        status,
+        updatedAt: Timestamp.now(),
+      };
+
+      if (status === 'accepted') {
+        updateData.startTime = Timestamp.now();
+      } else if (['ended', 'rejected', 'missed', 'cancelled'].includes(status)) {
+        updateData.endTime = Timestamp.now();
+      }
+
+      if (additionalData) {
+        Object.assign(updateData, additionalData);
+      }
+
+      await updateDoc(doc(db, 'call_sessions', sessionId), updateData);
+
+      console.log('[CallAPI] Call session status updated:', status);
+      return { success: true };
+    } catch (error: any) {
+      console.error('[CallAPI] Error updating call session:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async endCallSession(
+    sessionId: string,
+    duration: number,
+    callRate: number
+  ): Promise<{ success: boolean; cost?: number; error?: string }> {
+    try {
+      const minutes = Math.ceil(duration / 60);
+      const totalCost = minutes * callRate;
+
+      await updateDoc(doc(db, 'call_sessions', sessionId), {
+        status: 'ended',
+        endTime: Timestamp.now(),
+        duration,
+        totalCost,
+        updatedAt: Timestamp.now(),
+      });
+
+      console.log('[CallAPI] Call session ended:', sessionId, 'Cost:', totalCost);
+      return { success: true, cost: totalCost };
+    } catch (error: any) {
+      console.error('[CallAPI] Error ending call session:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  subscribeToCallSession(
+    sessionId: string,
+    callback: (session: any) => void,
+    onError?: (error: any) => void
+  ): (() => void) | null {
+    try {
+      const docRef = doc(db, 'call_sessions', sessionId);
+
+      const unsubscribe = onSnapshot(
+        docRef,
+        (docSnap) => {
+          if (docSnap.exists()) {
+            callback(docSnap.data());
+          }
+        },
+        (error) => {
+          console.error('[CallAPI] Error listening to call session:', error);
+          onError?.(error);
+        }
+      );
+
+      return unsubscribe;
+    } catch (error) {
+      console.error('[CallAPI] Failed to subscribe to call session:', error);
+      onError?.(error);
+      return null;
+    }
+  },
+
+  async getUserCallHistory(userId: string, limit_num: number = 50): Promise<any[]> {
+    try {
+      // Get calls where user is caller
+      const q1 = query(
+        collection(db, 'call_sessions'),
+        where('callerId', '==', userId),
+        orderBy('createdAt', 'desc'),
+        limit(limit_num)
+      );
+
+      // Get calls where user is callee
+      const q2 = query(
+        collection(db, 'call_sessions'),
+        where('calleeId', '==', userId),
+        orderBy('createdAt', 'desc'),
+        limit(limit_num)
+      );
+
+      const [snapshot1, snapshot2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+
+      const calls: any[] = [];
+
+      snapshot1.forEach((doc) => {
+        calls.push({ id: doc.id, ...doc.data() });
+      });
+
+      snapshot2.forEach((doc) => {
+        calls.push({ id: doc.id, ...doc.data() });
+      });
+
+      // Sort by date descending
+      calls.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+
+      return calls.slice(0, limit_num);
+    } catch (error: any) {
+      console.error('[CallAPI] Error getting call history:', error);
+      return [];
+    }
+  },
+
+  async getCallStats(expertId: string): Promise<{ totalCalls: number; totalDuration: number; totalEarnings: number }> {
+    try {
+      // Get completed calls where expert is callee (received calls)
+      const q = query(
+        collection(db, 'call_sessions'),
+        where('calleeId', '==', expertId),
+        where('status', '==', 'ended')
+      );
+
+      const snapshot = await getDocs(q);
+
+      let totalCalls = 0;
+      let totalDuration = 0;
+      let totalEarnings = 0;
+
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        totalCalls++;
+        totalDuration += data.duration || 0;
+        totalEarnings += data.totalCost || 0;
+      });
+
+      return {
+        totalCalls,
+        totalDuration: Math.floor(totalDuration / 60), // Convert to minutes
+        totalEarnings: parseFloat(totalEarnings.toFixed(2)),
+      };
+    } catch (error: any) {
+      console.error('[CallAPI] Error getting call stats:', error);
+      return { totalCalls: 0, totalDuration: 0, totalEarnings: 0 };
+    }
+  },
+
+  subscribeToCallStats(expertId: string, callback: (stats: any) => void): (() => void) | null {
+    try {
+      const q = query(
+        collection(db, 'call_sessions'),
+        where('calleeId', '==', expertId),
+        where('status', '==', 'ended')
+      );
+
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        let totalCalls = 0;
+        let totalDuration = 0;
+        let totalEarnings = 0;
+
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          totalCalls++;
+          totalDuration += data.duration || 0;
+          totalEarnings += data.totalCost || 0;
+        });
+
+        callback({
+          totalCalls,
+          totalDuration: Math.floor(totalDuration / 60),
+          totalEarnings: parseFloat(totalEarnings.toFixed(2)),
+        });
+      });
+
+      return unsubscribe;
+    } catch (error) {
+      console.error('[CallAPI] Failed to subscribe to call stats:', error);
+      return null;
+    }
+  },
+
+  async deleteCallSession(sessionId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      await deleteDoc(doc(db, 'call_sessions', sessionId));
+      console.log('[CallAPI] Call session deleted:', sessionId);
+      return { success: true };
+    } catch (error: any) {
+      console.error('[CallAPI] Error deleting call session:', error);
+      return { success: false, error: error.message };
+    }
+  },
 };
+
