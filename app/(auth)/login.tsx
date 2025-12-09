@@ -1,24 +1,28 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, Image, Alert } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { Mail, ArrowRight, Loader } from 'lucide-react-native';
+import { Mail, ArrowRight, Loader, Phone } from 'lucide-react-native';
 import { auth, db } from '../../config/firebase';
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signInWithPhoneNumber, PhoneAuthProvider, signInWithCredential, RecaptchaVerifier } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { storage, StorageKeys } from '../../utils/storage';
 import { signInWithGoogle, handleGoogleAuthSuccess } from '../../utils/googleAuth';
 
-type AuthMethod = 'initial' | 'email';
+type AuthMethod = 'initial' | 'email' | 'phone' | 'otp';
 
 export default function LoginScreen() {
   const [authMethod, setAuthMethod] = useState<AuthMethod>('initial');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [otp, setOtp] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [error, setError] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
+  const [verificationId, setVerificationId] = useState<string | null>(null);
+  const recaptchaVerifierRef = React.useRef<RecaptchaVerifier | null>(null);
 
   const handleEmailAuth = async () => {
     if (!email || !password) {
@@ -136,15 +140,128 @@ export default function LoginScreen() {
     }
   };
 
+  const handleSendOTP = async () => {
+    if (!phoneNumber.trim()) {
+      setError('Please enter a phone number');
+      return;
+    }
+
+    // Validate phone number format
+    const cleanPhone = phoneNumber.replace(/\D/g, '');
+    if (cleanPhone.length < 10) {
+      setError('Please enter a valid phone number (at least 10 digits)');
+      return;
+    }
+
+    setIsLoading(true);
+    setError('');
+
+    try {
+      console.log('[Login] Sending OTP to phone number:', phoneNumber);
+
+      // Format phone number with country code
+      let formattedPhone = phoneNumber;
+      if (!formattedPhone.startsWith('+')) {
+        const cleanedPhone = cleanPhone.slice(-10); // Get last 10 digits
+        formattedPhone = '+91' + cleanedPhone; // Default to India (+91)
+      }
+
+      console.log('[Login] Formatted phone:', formattedPhone);
+
+      // Set up reCAPTCHA verifier for web
+      if (Platform.OS === 'web' && !recaptchaVerifierRef.current) {
+        console.log('[Login] Setting up reCAPTCHA verifier for web');
+        try {
+          recaptchaVerifierRef.current = new RecaptchaVerifier(auth, 'recaptcha-container', {
+            size: 'invisible',
+          });
+        } catch (err) {
+          console.warn('[Login] reCAPTCHA container not found, proceeding without it');
+        }
+      }
+
+      // Send OTP
+      const confirmationResult = await signInWithPhoneNumber(
+        auth,
+        formattedPhone,
+        recaptchaVerifierRef.current || undefined
+      );
+
+      setVerificationId(confirmationResult.verificationId);
+      setAuthMethod('otp');
+      console.log('[Login] OTP sent successfully, verification ID:', confirmationResult.verificationId);
+    } catch (err: any) {
+      console.error('[Login] Error sending OTP:', err);
+      let errorMessage = 'Failed to send OTP';
+
+      if (err.code === 'auth/invalid-phone-number') {
+        errorMessage = 'Invalid phone number format. Please use format: +91 XXXXX XXXXX';
+      } else if (err.code === 'auth/too-many-requests') {
+        errorMessage = 'Too many requests. Please try again later.';
+      } else if (err.code === 'auth/billing-not-enabled') {
+        errorMessage = 'Phone authentication is not available. Please contact support or enable billing in Firebase console.';
+      } else if (err.code === 'auth/operation-not-supported-in-this-environment') {
+        errorMessage = 'Phone OTP works best on mobile devices. Please use Gmail or Email login on web.';
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+
+      setError(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleVerifyOTP = async () => {
+    if (!otp || otp.length < 6) {
+      setError('Please enter a valid 6-digit OTP');
+      return;
+    }
+
+    if (!verificationId) {
+      setError('Verification ID not found. Please try sending OTP again.');
+      return;
+    }
+
+    setIsLoading(true);
+    setError('');
+
+    try {
+      console.log('[Login] Verifying OTP...');
+      const credential = PhoneAuthProvider.credential(verificationId, otp);
+      const result = await signInWithCredential(auth, credential);
+      const user = result.user;
+
+      console.log('[Login] OTP verified successfully, user ID:', user.uid);
+      await handleSuccessfulAuth(user.uid, user.phoneNumber || '');
+    } catch (err: any) {
+      console.error('[Login] Error verifying OTP:', err);
+      let errorMessage = 'Invalid OTP';
+
+      if (err.code === 'auth/invalid-verification-code') {
+        errorMessage = 'Invalid OTP code. Please check and try again.';
+      } else if (err.code === 'auth/code-expired') {
+        errorMessage = 'OTP code has expired. Please request a new one.';
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+
+      setError(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const renderInitialScreen = () => (
     <View style={styles.content}>
       <View style={styles.logoContainer}>
-        <View style={styles.logoCircle}>
-          <Text style={styles.logoText}>EM</Text>
-        </View>
+        <Image
+          source={require('../../assets/images/Logo_EM1.png')}
+          style={styles.logoImage}
+          resizeMode="contain"
+        />
       </View>
       <View style={styles.header}>
-        <Text style={styles.title}>ExpertMentor</Text>
         <Text style={styles.subtitle}>Connect with experts or share your expertise</Text>
       </View>
 
@@ -157,11 +274,22 @@ export default function LoginScreen() {
           {isGoogleLoading ? (
             <ActivityIndicator size="small" color="#EA4335" />
           ) : (
-            <Text style={styles.googleIcon}>G</Text>
+            <View style={styles.gmailIconContainer}>
+              <Text style={styles.gmailIcon}>G</Text>
+            </View>
           )}
           <Text style={styles.authButtonText}>
             {isGoogleLoading ? 'Signing in...' : 'Continue with Gmail'}
           </Text>
+          <ArrowRight size={20} color="#6B7280" />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.authButton}
+          onPress={() => setAuthMethod('phone')}
+        >
+          <Phone size={24} color="#10B981" />
+          <Text style={styles.authButtonText}>Continue with Phone</Text>
           <ArrowRight size={20} color="#6B7280" />
         </TouchableOpacity>
 
@@ -283,6 +411,126 @@ export default function LoginScreen() {
     </View>
   );
 
+  const renderPhoneAuth = () => (
+    <View style={styles.content}>
+      <TouchableOpacity
+        style={styles.backButton}
+        onPress={() => {
+          setAuthMethod('initial');
+          setError('');
+          setPhoneNumber('');
+          setOtp('');
+          setVerificationId(null);
+        }}
+      >
+        <Text style={styles.backButtonText}>← Back</Text>
+      </TouchableOpacity>
+
+      <View style={styles.header}>
+        <Text style={styles.title}>Login with Phone</Text>
+        <Text style={styles.subtitle}>Enter your phone number to receive an OTP</Text>
+      </View>
+
+      <View style={styles.form}>
+        <View style={styles.inputContainer}>
+          <Phone size={20} color="#6B7280" style={styles.inputIcon} />
+          <TextInput
+            style={styles.input}
+            value={phoneNumber}
+            onChangeText={(text) => {
+              setPhoneNumber(text);
+              setError('');
+            }}
+            placeholder="+91 98765 43210"
+            keyboardType="phone-pad"
+            autoCapitalize="none"
+            editable={!isLoading}
+          />
+        </View>
+
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+        <TouchableOpacity
+          style={[styles.button, isLoading && styles.buttonDisabled]}
+          onPress={handleSendOTP}
+          disabled={isLoading}
+        >
+          {isLoading ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.buttonText}>Send OTP</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+
+      {/* Recaptcha container for web */}
+      {Platform.OS === 'web' && <View id="recaptcha-container" />}
+    </View>
+  );
+
+  const renderOTPAuth = () => (
+    <View style={styles.content}>
+      <TouchableOpacity
+        style={styles.backButton}
+        onPress={() => {
+          setAuthMethod('phone');
+          setError('');
+          setOtp('');
+        }}
+      >
+        <Text style={styles.backButtonText}>← Back</Text>
+      </TouchableOpacity>
+
+      <View style={styles.header}>
+        <Text style={styles.title}>Verify OTP</Text>
+        <Text style={styles.subtitle}>Enter the 6-digit code sent to {phoneNumber}</Text>
+      </View>
+
+      <View style={styles.form}>
+        <View style={styles.inputContainer}>
+          <TextInput
+            style={styles.input}
+            value={otp}
+            onChangeText={(text) => {
+              setOtp(text.replace(/\D/g, '').slice(0, 6));
+              setError('');
+            }}
+            placeholder="000000"
+            keyboardType="number-pad"
+            maxLength={6}
+            autoCapitalize="none"
+            editable={!isLoading}
+          />
+        </View>
+
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+        <TouchableOpacity
+          style={[styles.button, isLoading && styles.buttonDisabled]}
+          onPress={handleVerifyOTP}
+          disabled={isLoading}
+        >
+          {isLoading ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.buttonText}>Verify OTP</Text>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.switchButton}
+          onPress={handleSendOTP}
+          disabled={isLoading}
+        >
+          <Text style={styles.switchText}>
+            Didn't receive the code? 
+            <Text style={styles.switchTextBold}> Resend</Text>
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <KeyboardAvoidingView
@@ -297,6 +545,8 @@ export default function LoginScreen() {
           >
             {authMethod === 'initial' && renderInitialScreen()}
             {authMethod === 'email' && renderEmailAuth()}
+            {authMethod === 'phone' && renderPhoneAuth()}
+            {authMethod === 'otp' && renderOTPAuth()}
           </ScrollView>
         </LinearGradient>
       </KeyboardAvoidingView>
@@ -322,7 +572,11 @@ const styles = StyleSheet.create({
   },
   logoContainer: {
     alignItems: 'center',
-    marginBottom: 32,
+    marginBottom: 0,
+  },
+  logoImage: {
+    width: 200,
+    height: 200,
   },
   logoCircle: {
     width: 120,
@@ -339,6 +593,11 @@ const styles = StyleSheet.create({
     borderWidth: 4,
     borderColor: '#FFFFFF',
   },
+  logoIcon: {
+    fontSize: 48,
+    fontFamily: 'Inter-Bold',
+    color: '#FFFFFF',
+  },
   logoText: {
     fontSize: 48,
     fontFamily: 'Inter-Bold',
@@ -347,7 +606,8 @@ const styles = StyleSheet.create({
   },
   header: {
     alignItems: 'center',
-    marginBottom: 48,
+    marginBottom: 32,
+    marginTop: 0,
   },
   title: {
     fontSize: 32,
@@ -375,12 +635,31 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
     gap: 16,
   },
+  gmailIconContainer: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  gmailIconContainer: {
+    width: 28,
+    height: 28,
+    borderRadius: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EA4335',
+  },
+  gmailIcon: {
+    fontSize: 18,
+    fontFamily: 'Inter-Bold',
+    color: '#FFFFFF',
+  },
   googleIcon: {
     fontSize: 20,
     fontFamily: 'Inter-Bold',
     width: 24,
     textAlign: 'center',
-    color: '#EA4335',
+    color: '#FFFFFF',
   },
   authButtonText: {
     flex: 1,
@@ -402,22 +681,25 @@ const styles = StyleSheet.create({
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    marginBottom: 16,
-    paddingHorizontal: 16,
+    backgroundColor: 'transparent',
+    borderRadius: 0,
+    borderWidth: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: '#D1D5DB',
+    marginBottom: 24,
+    paddingHorizontal: 0,
+    paddingVertical: 12,
   },
   inputIcon: {
     marginRight: 12,
   },
   input: {
     flex: 1,
-    paddingVertical: 16,
+    paddingVertical: 8,
     fontSize: 16,
     fontFamily: 'Inter-Regular',
     color: '#1F2937',
+    backgroundColor: 'transparent',
   },
   errorText: {
     fontSize: 14,

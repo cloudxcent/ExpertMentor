@@ -159,6 +159,12 @@ export default function ExpertDetailScreen() {
   const handleStartCall = (type: 'audio' | 'video') => {
     if (!expert) return;
 
+    // Check if running on web
+    if (Platform.OS === 'web') {
+      Alert.alert('Not Available', 'Voice and video calls are only available on mobile devices. Please use the mobile app to make calls.');
+      return;
+    }
+
     Alert.alert(
       'Start Call',
       `Start ${type} call with ${expert.name}? Rate: ₹${expert.callRate}/min`,
