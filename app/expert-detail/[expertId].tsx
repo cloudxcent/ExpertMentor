@@ -222,7 +222,7 @@ export default function ExpertDetailScreen() {
 
   const copyProfileLink = async () => {
     if (!expert) return;
-    const profileUrl = `https://expertmentor.app/expert/${expert.id}`;
+    const profileUrl = `https://Mentorxity.app/expert/${expert.id}`;
 
     if (Platform.OS === 'web') {
       try {
@@ -238,8 +238,8 @@ export default function ExpertDetailScreen() {
 
   const shareViaWhatsApp = async () => {
     if (!expert) return;
-    const profileUrl = `https://expertmentor.app/expert/${expert.id}`;
-    const message = `Check out ${expert.name}'s profile on ExpertMentor!\n${expert.expertise}\n\n${profileUrl}`;
+    const profileUrl = `https://Mentorxity.app/expert/${expert.id}`;
+    const message = `Check out ${expert.name}'s profile on Mentorxity!\n${expert.expertise}\n\n${profileUrl}`;
     const whatsappUrl = `whatsapp://send?text=${encodeURIComponent(message)}`;
 
     try {
@@ -256,9 +256,9 @@ export default function ExpertDetailScreen() {
 
   const shareViaEmail = async () => {
     if (!expert) return;
-    const profileUrl = `https://expertmentor.app/expert/${expert.id}`;
-    const subject = `Check out ${expert.name} on ExpertMentor`;
-    const body = `I found this expert on ExpertMentor who might interest you:\n\n${expert.name}\n${expert.expertise}\n${expert.bio}\n\nView profile: ${profileUrl}`;
+    const profileUrl = `https://Mentorxity.app/expert/${expert.id}`;
+    const subject = `Check out ${expert.name} on Mentorxity`;
+    const body = `I found this expert on Mentorxity who might interest you:\n\n${expert.name}\n${expert.expertise}\n${expert.bio}\n\nView profile: ${profileUrl}`;
     const emailUrl = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 
     try {
@@ -270,13 +270,13 @@ export default function ExpertDetailScreen() {
 
   const shareViaSystem = async () => {
     if (!expert) return;
-    const profileUrl = `https://expertmentor.app/expert/${expert.id}`;
-    const message = `Check out ${expert.name}'s profile on ExpertMentor!\n${expert.expertise}\n\n${profileUrl}`;
+    const profileUrl = `https://Mentorxity.app/expert/${expert.id}`;
+    const message = `Check out ${expert.name}'s profile on Mentorxity!\n${expert.expertise}\n\n${profileUrl}`;
 
     try {
       await RNShare.share({
         message: message,
-        title: `${expert.name} - ExpertMentor`
+        title: `${expert.name} - Mentorxity`
       });
     } catch (error) {
       console.error('Error sharing:', error);

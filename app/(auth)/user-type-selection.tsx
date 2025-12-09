@@ -30,7 +30,7 @@ export default function UserTypeSelection() {
       >
         <View style={styles.content}>
           <View style={styles.header}>
-            <Text style={styles.title}>Welcome to ExpertMentor</Text>
+            <Text style={styles.title}>Welcome to Mentorxity</Text>
             <Text style={styles.subtitle}>
               How would you like to use the platform?
             </Text>

@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "ExpertMentor",
+    "name": "Mentorxity",
     "slug": "expert-mentor",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -19,14 +19,14 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Allow ExpertMentor to access your camera for QR scanning and video calls."
+          "cameraPermission": "Allow Mentorxity to access your camera for QR scanning and video calls."
         }
       ],
       [
         "expo-av",
         {
-          "microphonePermission": "Allow ExpertMentor to access your microphone for voice calls.",
-          "cameraPermission": "Allow ExpertMentor to access your camera for video calls."
+          "microphonePermission": "Allow Mentorxity to access your microphone for voice calls.",
+          "cameraPermission": "Allow Mentorxity to access your camera for video calls."
         }
       ]
     ],

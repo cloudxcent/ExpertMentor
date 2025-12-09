@@ -318,7 +318,7 @@ export default function HomeScreen() {
             <View style={styles.sectionHeader}>
               <View style={styles.newsHeader}>
                 <Newspaper size={20} color="#1F2937" />
-                <Text style={styles.sectionTitle}>ExpertMentor in News</Text>
+                <Text style={styles.sectionTitle}>Mentorxity in News</Text>
               </View>
             </View>
 
@@ -329,7 +329,7 @@ export default function HomeScreen() {
                   style={styles.newsImage}
                 />
                 <View style={styles.newsContent}>
-                  <Text style={styles.newsTitle}>ExpertMentor Raises $10M in Series A Funding</Text>
+                  <Text style={styles.newsTitle}>Mentorxity Raises $10M in Series A Funding</Text>
                   <Text style={styles.newsDate}>TechCrunch • 2 days ago</Text>
                 </View>
               </TouchableOpacity>
@@ -340,7 +340,7 @@ export default function HomeScreen() {
                   style={styles.newsImage}
                 />
                 <View style={styles.newsContent}>
-                  <Text style={styles.newsTitle}>How ExpertMentor is Revolutionizing Professional Consulting</Text>
+                  <Text style={styles.newsTitle}>How Mentorxity is Revolutionizing Professional Consulting</Text>
                   <Text style={styles.newsDate}>Forbes • 5 days ago</Text>
                 </View>
               </TouchableOpacity>
@@ -448,7 +448,7 @@ export default function HomeScreen() {
           <View style={styles.sectionHeader}>
             <View style={styles.newsHeader}>
               <Newspaper size={20} color="#1F2937" />
-              <Text style={styles.sectionTitle}>ExpertMentor in News</Text>
+              <Text style={styles.sectionTitle}>Mentorxity in News</Text>
             </View>
           </View>
 
@@ -459,7 +459,7 @@ export default function HomeScreen() {
                 style={styles.newsImage}
               />
               <View style={styles.newsContent}>
-                <Text style={styles.newsTitle}>ExpertMentor Raises $10M in Series A Funding</Text>
+                <Text style={styles.newsTitle}>Mentorxity Raises $10M in Series A Funding</Text>
                 <Text style={styles.newsDate}>TechCrunch • 2 days ago</Text>
               </View>
             </TouchableOpacity>
@@ -470,7 +470,7 @@ export default function HomeScreen() {
                 style={styles.newsImage}
               />
               <View style={styles.newsContent}>
-                <Text style={styles.newsTitle}>How ExpertMentor is Revolutionizing Professional Consulting</Text>
+                <Text style={styles.newsTitle}>How Mentorxity is Revolutionizing Professional Consulting</Text>
                 <Text style={styles.newsDate}>Forbes • 5 days ago</Text>
               </View>
             </TouchableOpacity>
