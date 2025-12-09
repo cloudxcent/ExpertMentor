@@ -11,8 +11,10 @@ import {
   orderBy,
   Timestamp,
   addDoc,
+  runTransaction,
 } from 'firebase/firestore';
 import { User } from 'firebase/auth';
+import { distributePayment } from './pricing';
 
 interface ProfileData {
   name: string;
@@ -368,6 +370,288 @@ export const api = {
     } catch (error) {
       console.error('Error getting reviews:', error);
       return [];
+    }
+  },
+
+  // ===== WALLET AND TRANSACTION METHODS =====
+
+  /**
+   * Get user's wallet balance
+   */
+  async getWalletBalance(userId: string): Promise<{ success: boolean; balance?: number; error?: string }> {
+    try {
+      const docRef = doc(db, 'profiles', userId);
+      const docSnap = await getDoc(docRef);
+
+      if (docSnap.exists()) {
+        const balance = docSnap.data().walletBalance || 0;
+        return { success: true, balance };
+      } else {
+        return { success: false, error: 'User profile not found' };
+      }
+    } catch (error: any) {
+      console.error('Error getting wallet balance:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  /**
+   * Get user's total earnings (for experts)
+   */
+  async getTotalEarnings(userId: string): Promise<{ success: boolean; earnings?: number; error?: string }> {
+    try {
+      const docRef = doc(db, 'profiles', userId);
+      const docSnap = await getDoc(docRef);
+
+      if (docSnap.exists()) {
+        const earnings = docSnap.data().totalEarnings || 0;
+        return { success: true, earnings };
+      } else {
+        return { success: false, error: 'User profile not found' };
+      }
+    } catch (error: any) {
+      console.error('Error getting total earnings:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  /**
+   * Add funds to user's wallet
+   */
+  async addWalletFunds(userId: string, amount: number, paymentMethod: string): Promise<{ success: boolean; transactionId?: string; error?: string }> {
+    try {
+      // Create transaction record
+      const transactionRef = await addDoc(collection(db, 'transactions'), {
+        userId,
+        type: 'credit',
+        amount,
+        description: `Wallet top-up via ${paymentMethod}`,
+        status: 'completed',
+        paymentMethod,
+        createdAt: Timestamp.now(),
+      });
+
+      // Update user profile wallet balance
+      const userRef = doc(db, 'profiles', userId);
+      const userSnap = await getDoc(userRef);
+
+      if (userSnap.exists()) {
+        const currentBalance = userSnap.data().walletBalance || 0;
+        await updateDoc(userRef, {
+          walletBalance: currentBalance + amount,
+          updatedAt: Timestamp.now(),
+        });
+      }
+
+      return { success: true, transactionId: transactionRef.id };
+    } catch (error: any) {
+      console.error('Error adding wallet funds:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  /**
+   * Process payment when session ends
+   * Deducts from client, credits to expert (80%), and platform (20%)
+   */
+  async processSessionPayment(
+    sessionId: string,
+    clientId: string,
+    expertId: string,
+    totalCost: number,
+    sessionType: 'chat' | 'call'
+  ): Promise<{ success: boolean; expertEarnings?: number; error?: string }> {
+    try {
+      const result = await runTransaction(db, async (transaction) => {
+        // Get client and expert profiles
+        const clientRef = doc(db, 'profiles', clientId);
+        const expertRef = doc(db, 'profiles', expertId);
+
+        const clientSnap = await transaction.get(clientRef);
+        const expertSnap = await transaction.get(expertRef);
+
+        if (!clientSnap.exists() || !expertSnap.exists()) {
+          throw new Error('Client or expert profile not found');
+        }
+
+        // Calculate payment distribution
+        const distribution = distributePayment(totalCost);
+
+        // Check if client has sufficient balance
+        const clientBalance = clientSnap.data().walletBalance || 0;
+        if (clientBalance < totalCost) {
+          throw new Error('Insufficient balance to process payment');
+        }
+
+        // Update client balance (debit)
+        transaction.update(clientRef, {
+          walletBalance: clientBalance - totalCost,
+          updatedAt: Timestamp.now(),
+        });
+
+        // Update expert balance and earnings (credit 80%)
+        const expertBalance = expertSnap.data().walletBalance || 0;
+        const expertEarnings = expertSnap.data().totalEarnings || 0;
+        transaction.update(expertRef, {
+          walletBalance: expertBalance + distribution.expertEarnings,
+          totalEarnings: expertEarnings + distribution.expertEarnings,
+          updatedAt: Timestamp.now(),
+        });
+
+        // Create client transaction record
+        const clientTransactionRef = collection(db, 'transactions');
+        transaction.set(
+          doc(clientTransactionRef),
+          {
+            userId: clientId,
+            type: 'debit',
+            amount: totalCost,
+            description: `${sessionType === 'chat' ? 'Chat' : 'Call'} session payment to ${expertSnap.data().name}`,
+            sessionId,
+            status: 'completed',
+            createdAt: Timestamp.now(),
+          },
+          { merge: false }
+        );
+
+        // Create expert transaction record
+        const expertTransactionRef = collection(db, 'transactions');
+        transaction.set(
+          doc(expertTransactionRef),
+          {
+            userId: expertId,
+            type: 'credit',
+            amount: distribution.expertEarnings,
+            description: `Earnings from ${sessionType === 'chat' ? 'chat' : 'call'} session with ${clientSnap.data().name}`,
+            sessionId,
+            status: 'completed',
+            createdAt: Timestamp.now(),
+          },
+          { merge: false }
+        );
+
+        // Create platform revenue record
+        const platformRef = doc(db, 'platform_revenue', 'revenue_tracker');
+        const platformSnap = await transaction.get(platformRef);
+
+        if (platformSnap.exists()) {
+          const currentRevenue = platformSnap.data().totalRevenue || 0;
+          transaction.update(platformRef, {
+            totalRevenue: currentRevenue + distribution.platformRevenue,
+            lastUpdated: Timestamp.now(),
+          });
+        } else {
+          transaction.set(platformRef, {
+            totalRevenue: distribution.platformRevenue,
+            lastUpdated: Timestamp.now(),
+          });
+        }
+
+        return distribution.expertEarnings;
+      });
+
+      return { success: true, expertEarnings: result };
+    } catch (error: any) {
+      console.error('Error processing session payment:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  /**
+   * Get transaction history for a user
+   */
+  async getTransactionHistory(userId: string, limit: number = 50): Promise<{ success: boolean; transactions?: any[]; error?: string }> {
+    try {
+      const q = query(
+        collection(db, 'transactions'),
+        where('userId', '==', userId),
+        orderBy('createdAt', 'desc')
+      );
+
+      const querySnapshot = await getDocs(q);
+      const transactions: any[] = [];
+
+      querySnapshot.forEach((doc) => {
+        transactions.push({ id: doc.id, ...doc.data() });
+      });
+
+      return { success: true, transactions: transactions.slice(0, limit) };
+    } catch (error: any) {
+      console.error('Error getting transaction history:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  /**
+   * Update expert's pricing rates
+   */
+  async updateExpertPricing(
+    expertId: string,
+    chatRatePerMinute: number,
+    audioCallRatePerMinute: number,
+    videoCallRatePerMinute: number
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      await updateDoc(doc(db, 'profiles', expertId), {
+        chatRatePerMinute: parseFloat(chatRatePerMinute.toString()),
+        audioCallRatePerMinute: parseFloat(audioCallRatePerMinute.toString()),
+        videoCallRatePerMinute: parseFloat(videoCallRatePerMinute.toString()),
+        updatedAt: Timestamp.now(),
+      });
+
+      return { success: true };
+    } catch (error: any) {
+      console.error('Error updating expert pricing:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  /**
+   * Get expert's pricing rates
+   */
+  async getExpertPricing(expertId: string): Promise<{ success: boolean; pricing?: any; error?: string }> {
+    try {
+      const docRef = doc(db, 'profiles', expertId);
+      const docSnap = await getDoc(docRef);
+
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const pricing = {
+          chatRatePerMinute: data.chatRatePerMinute || 0,
+          audioCallRatePerMinute: data.audioCallRatePerMinute || 0,
+          videoCallRatePerMinute: data.videoCallRatePerMinute || 0,
+        };
+        return { success: true, pricing };
+      } else {
+        return { success: false, error: 'Expert profile not found' };
+      }
+    } catch (error: any) {
+      console.error('Error getting expert pricing:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  /**
+   * Check if user has sufficient balance for a session
+   */
+  async checkBalance(userId: string, requiredAmount: number): Promise<{ success: boolean; hasSufficientBalance?: boolean; currentBalance?: number; error?: string }> {
+    try {
+      const docRef = doc(db, 'profiles', userId);
+      const docSnap = await getDoc(docRef);
+
+      if (docSnap.exists()) {
+        const currentBalance = docSnap.data().walletBalance || 0;
+        return {
+          success: true,
+          hasSufficientBalance: currentBalance >= requiredAmount,
+          currentBalance,
+        };
+      } else {
+        return { success: false, error: 'User profile not found' };
+      }
+    } catch (error: any) {
+      console.error('Error checking balance:', error);
+      return { success: false, error: error.message };
     }
   },
 };

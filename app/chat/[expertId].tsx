@@ -1,12 +1,14 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Image, KeyboardAvoidingView, Platform, ActivityIndicator, Modal, FlatList } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Image, KeyboardAvoidingView, Platform, ActivityIndicator, Modal, FlatList, Alert } from 'react-native';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Send, Phone, Camera, MoreVertical, Wallet, Plus, Smile, ImagePlus, X } from 'lucide-react-native';
 import { db, auth } from '../../config/firebase';
 import { collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, getDoc, doc, setDoc, getDocs, updateDoc } from 'firebase/firestore';
 import { storage, StorageKeys } from '../../utils/storage';
 import { ensureMediaUrl } from '../../utils/firebaseStorageUrl';
 import { createMessageNotification } from '../../utils/notifications';
+import { api } from '../../utils/api.firebase';
+import { formatCurrency } from '../../utils/pricing';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 
@@ -39,6 +41,15 @@ export default function ChatScreen() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [imageViewerModal, setImageViewerModal] = useState(false);
   const [viewingImageUrl, setViewingImageUrl] = useState<string | null>(null);
+  
+  // Balance checking states
+  const [userBalance, setUserBalance] = useState<number>(0);
+  const [isCheckingBalance, setIsCheckingBalance] = useState(false);
+  const [showBalanceModal, setShowBalanceModal] = useState(false);
+  const [chatRatePerMinute, setChatRatePerMinute] = useState<number>(0);
+  const [callRatePerMinute, setCallRatePerMinute] = useState<number>(0);
+  const [isRateLoaded, setIsRateLoaded] = useState(false);
+  
   const scrollViewRef = useRef<ScrollView>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const hasScrolledRef = useRef(false);
@@ -71,6 +82,20 @@ export default function ChatScreen() {
       setCurrentUserId(profileData.id);
       setCurrentUserName(profileData.name || 'User');
 
+      // Check user wallet balance
+      try {
+        setIsCheckingBalance(true);
+        const balanceResult = await api.getWalletBalance(profileData.id);
+        const balance = balanceResult.success ? (balanceResult.balance || 0) : 0;
+        setUserBalance(balance);
+        console.log('[Chat] ✓ User balance loaded:', balance);
+      } catch (balanceError) {
+        console.warn('[Chat] ⚠ Error checking balance:', balanceError);
+        setUserBalance(0);
+      } finally {
+        setIsCheckingBalance(false);
+      }
+
       if (!expert) {
         console.error('[Chat] ✗ No expert ID provided');
         setIsLoading(false);
@@ -82,8 +107,24 @@ export default function ChatScreen() {
       if (expertSnap.exists()) {
         console.log('[Chat] ✓ Expert details loaded:', expertSnap.data().name);
         setExpertDetails(expertSnap.data());
+        
+        // Get expert's chat and call rates (stored as chatRate and callRate in profile, which are per-minute)
+        const expertData = expertSnap.data();
+        const chatRate = expertData.chatRate ? parseFloat(expertData.chatRate) : (parseFloat(chatRate as string) || 5);
+        const callRate = expertData.callRate ? parseFloat(expertData.callRate) : (chatRate || 5);
+        setChatRatePerMinute(chatRate);
+        setCallRatePerMinute(callRate);
+        setIsRateLoaded(true);
+        console.log('[Chat] ✓ Chat rate per minute set to:', chatRate, 'Call rate per minute set to:', callRate, 'from expert profile');
       } else {
         console.warn('[Chat] ⚠ Expert profile not found in database');
+        // Use passed chatRate or default
+        const chatRate = parseFloat(chatRate as string) || 5;
+        const callRate = chatRate;
+        setChatRatePerMinute(chatRate);
+        setCallRatePerMinute(callRate);
+        setIsRateLoaded(true);
+        console.log('[Chat] ✓ Chat rate per minute set to:', chatRate, 'Call rate per minute set to:', callRate, 'from params');
       }
 
       const chatSessionId = [profileData.id, expert].sort().join('_');
@@ -218,6 +259,37 @@ export default function ChatScreen() {
     };
   }, [sessionId, currentUserId]);
 
+  // Auto-refresh balance when screen regains focus (after returning from wallet)
+  useFocusEffect(
+    useCallback(() => {
+      const refreshBalance = async () => {
+        try {
+          const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
+          if (profileData?.id) {
+            const balanceResult = await api.getWalletBalance(profileData.id);
+            const balance = balanceResult.success ? (balanceResult.balance || 0) : 0;
+            setUserBalance(balance);
+            console.log('[Chat] ✓ Balance refreshed on screen focus:', balance);
+          }
+        } catch (balanceError) {
+          console.warn('[Chat] ⚠ Error refreshing balance:', balanceError);
+        }
+      };
+
+      refreshBalance();
+    }, [])
+  );
+
+  // Auto-show balance modal when rate is loaded and balance is insufficient
+  useEffect(() => {
+    if (isRateLoaded && isLoading === false) {
+      if (userBalance < chatRatePerMinute) {
+        console.log('[Chat] ✓ Auto-showing balance modal - Balance:', userBalance, 'Rate:', chatRatePerMinute);
+        setShowBalanceModal(true);
+      }
+    }
+  }, [isRateLoaded, userBalance, chatRatePerMinute, isLoading]);
+
   const pickImage = async () => {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -274,6 +346,13 @@ export default function ChatScreen() {
   };
 
   const handleSendMessage = async () => {
+    // Check balance before allowing message
+    if (userBalance < chatRatePerMinute) {
+      console.log('[Chat] ✗ Insufficient balance. User balance:', userBalance, 'Chat rate:', chatRatePerMinute);
+      setShowBalanceModal(true);
+      return;
+    }
+
     if (!newMessage.trim() && !selectedImage) {
       return;
     }
@@ -431,23 +510,39 @@ export default function ChatScreen() {
   };
 
   const startVoiceCall = () => {
+    // Check balance before allowing voice call
+    if (userBalance < callRatePerMinute) {
+      console.log('[Chat] ✗ Insufficient balance for voice call. User balance:', userBalance, 'Call rate:', callRatePerMinute);
+      setShowBalanceModal(true);
+      return;
+    }
+
     router.push({
       pathname: '/call/[expertId]',
       params: {
         expertId: Array.isArray(expertId) ? expertId[0] : expertId,
         expertName: Array.isArray(expertName) ? expertName[0] : expertName,
-        callType: 'audio'
+        callType: 'audio',
+        callRate: callRatePerMinute.toString()
       }
     });
   };
 
   const startVideoCall = () => {
+    // Check balance before allowing video call
+    if (userBalance < callRatePerMinute) {
+      console.log('[Chat] ✗ Insufficient balance for video call. User balance:', userBalance, 'Call rate:', callRatePerMinute);
+      setShowBalanceModal(true);
+      return;
+    }
+
     router.push({
       pathname: '/call/[expertId]',
       params: {
         expertId,
         expertName,
-        callType: 'video'
+        callType: 'video',
+        callRate: callRatePerMinute.toString()
       }
     });
   };
@@ -494,10 +589,18 @@ export default function ChatScreen() {
         </View>
 
         <View style={styles.headerActions}>
-          <TouchableOpacity style={styles.callButton} onPress={startVoiceCall}>
+          <TouchableOpacity 
+            style={[styles.callButton, (!isRateLoaded || userBalance < callRatePerMinute) && styles.disabledButton]}
+            onPress={startVoiceCall}
+            disabled={!isRateLoaded || userBalance < callRatePerMinute}
+          >
             <Phone size={20} color="#FFFFFF" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.videoCallButton} onPress={startVideoCall}>
+          <TouchableOpacity 
+            style={[styles.videoCallButton, (!isRateLoaded || userBalance < callRatePerMinute) && styles.disabledButton]}
+            onPress={startVideoCall}
+            disabled={!isRateLoaded || userBalance < callRatePerMinute}
+          >
             <Camera size={20} color="#FFFFFF" />
           </TouchableOpacity>
           <TouchableOpacity style={styles.moreButton}>
@@ -651,19 +754,35 @@ export default function ChatScreen() {
 
         {/* Input */}
         <View style={styles.inputContainer}>
+          {isRateLoaded && userBalance < chatRatePerMinute && (
+            <View style={styles.balanceWarningBanner}>
+              <Wallet size={16} color="#EF4444" />
+              <Text style={styles.balanceWarningText}>
+                Insufficient balance ({formatCurrency(userBalance)} needed {formatCurrency(chatRatePerMinute)})
+              </Text>
+              <TouchableOpacity 
+                style={styles.topUpButton}
+                onPress={() => router.push('/wallet')}
+              >
+                <Plus size={14} color="#FFFFFF" />
+                <Text style={styles.topUpButtonText}>Add Balance</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          
           <TouchableOpacity
             style={styles.iconButton}
             onPress={pickImage}
-            disabled={isSending}
+            disabled={isSending || !isRateLoaded || userBalance < chatRatePerMinute}
           >
-            <ImagePlus size={20} color="#2563EB" />
+            <ImagePlus size={20} color={!isRateLoaded || userBalance < chatRatePerMinute ? "#D1D5DB" : "#2563EB"} />
           </TouchableOpacity>
           
           <TextInput
-            style={styles.input}
+            style={[styles.input, (!isRateLoaded || userBalance < chatRatePerMinute) && styles.disabledInput]}
             value={newMessage}
             onChangeText={setNewMessage}
-            placeholder="Type a message..."
+            placeholder={!isRateLoaded || userBalance < chatRatePerMinute ? "Add balance to chat" : "Type a message..."}
             placeholderTextColor="#9CA3AF"
             multiline
             maxLength={500}
@@ -671,21 +790,21 @@ export default function ChatScreen() {
             autoCorrect={true}
             returnKeyType="default"
             blurOnSubmit={false}
-            editable={!isSending}
+            editable={!isSending && isRateLoaded && userBalance >= chatRatePerMinute}
           />
           
           <TouchableOpacity
             style={styles.iconButton}
             onPress={() => setShowEmojiPicker(!showEmojiPicker)}
-            disabled={isSending}
+            disabled={isSending || !isRateLoaded || userBalance < chatRatePerMinute}
           >
-            <Smile size={20} color="#2563EB" />
+            <Smile size={20} color={!isRateLoaded || userBalance < chatRatePerMinute ? "#D1D5DB" : "#2563EB"} />
           </TouchableOpacity>
           
           <TouchableOpacity
-            style={[styles.sendButton, (isSending || (!newMessage.trim() && !selectedImage)) && styles.sendButtonDisabled]}
+            style={[styles.sendButton, (isSending || (!newMessage.trim() && !selectedImage) || !isRateLoaded || userBalance < chatRatePerMinute) && styles.sendButtonDisabled]}
             onPress={handleSendMessage}
-            disabled={isSending || (!newMessage.trim() && !selectedImage)}
+            disabled={isSending || (!newMessage.trim() && !selectedImage) || !isRateLoaded || userBalance < chatRatePerMinute}
           >
             {isSending ? (
               <ActivityIndicator size="small" color="#FFFFFF" />
@@ -739,6 +858,62 @@ export default function ChatScreen() {
             >
               <Text style={styles.downloadButtonText}>⬇ Download Image</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Balance Check Modal */}
+      <Modal
+        visible={showBalanceModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowBalanceModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.balanceModalContent}>
+            <View style={styles.balanceModalHeader}>
+              <Wallet size={32} color="#EF4444" />
+              <Text style={styles.balanceModalTitle}>Insufficient Balance</Text>
+            </View>
+
+            <View style={styles.balanceModalBody}>
+              <Text style={styles.balanceModalLabel}>Current Balance:</Text>
+              <Text style={styles.balanceModalAmount}>{formatCurrency(userBalance)}</Text>
+
+              <Text style={[styles.balanceModalLabel, { marginTop: 16 }]}>Required Amount:</Text>
+              <Text style={styles.balanceModalAmount}>{formatCurrency(chatRatePerMinute)}/min</Text>
+
+              <View style={styles.balanceModalShortfall}>
+                <Text style={styles.shortfallLabel}>Shortfall:</Text>
+                <Text style={styles.shortfallAmount}>
+                  {formatCurrency(Math.max(0, chatRatePerMinute - userBalance))}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.balanceModalFooter}>
+              <TouchableOpacity
+                style={styles.balanceModalButtonCancel}
+                onPress={() => {
+                  // Close modal but keep chat/calls disabled until balance is added
+                  setShowBalanceModal(false);
+                  console.log('[Chat] User closed modal - chat/calls still disabled due to insufficient balance');
+                }}
+              >
+                <Text style={styles.balanceModalButtonText}>Not Now</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.balanceModalButtonAdd}
+                onPress={() => {
+                  setShowBalanceModal(false);
+                  router.push('/wallet');
+                }}
+              >
+                <Plus size={16} color="#FFFFFF" style={{ marginRight: 4 }} />
+                <Text style={styles.balanceModalButtonAddText}>Add Balance</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1127,5 +1302,152 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     fontFamily: 'Inter-Bold',
-  }
+  },
+  balanceWarningBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEE2E2',
+    borderLeftWidth: 4,
+    borderLeftColor: '#EF4444',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 8,
+    borderRadius: 6,
+    gap: 8,
+  },
+  balanceWarningText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#991B1B',
+    fontWeight: '500',
+    fontFamily: 'Inter-Regular',
+  },
+  topUpButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EF4444',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 4,
+    gap: 4,
+  },
+  topUpButtonText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '600',
+    fontFamily: 'Inter-Bold',
+  },
+  disabledInput: {
+    backgroundColor: '#E5E7EB',
+    color: '#9CA3AF',
+  },
+  disabledButton: {
+    opacity: 0.5,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  balanceModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 16,
+    width: '100%',
+    maxWidth: 320,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  balanceModalHeader: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  balanceModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1F2937',
+    marginTop: 12,
+    fontFamily: 'Inter-Bold',
+  },
+  balanceModalBody: {
+    marginBottom: 20,
+  },
+  balanceModalLabel: {
+    fontSize: 13,
+    color: '#6B7280',
+    fontWeight: '600',
+    marginBottom: 4,
+    fontFamily: 'Inter-Regular',
+  },
+  balanceModalAmount: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#2563EB',
+    marginBottom: 16,
+    fontFamily: 'Inter-Bold',
+  },
+  balanceModalShortfall: {
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#EF4444',
+  },
+  shortfallLabel: {
+    fontSize: 12,
+    color: '#7F1D1D',
+    fontWeight: '600',
+    marginBottom: 4,
+    fontFamily: 'Inter-Regular',
+  },
+  shortfallAmount: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#EF4444',
+    fontFamily: 'Inter-Bold',
+  },
+  balanceModalFooter: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  balanceModalButtonCancel: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    alignItems: 'center',
+  },
+  balanceModalButtonAdd: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: '#10B981',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 4,
+  },
+  balanceModalButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    fontFamily: 'Inter-Bold',
+  },
+  balanceModalButtonAddText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    fontFamily: 'Inter-Bold',
+  },
 });

@@ -9,6 +9,8 @@ export interface User {
   userType: 'mentor' | 'client';
   isOnline?: boolean;
   createdAt: Date;
+  walletBalance: number;
+  totalEarnings: number;
 }
 
 export interface MentorProfile extends User {
@@ -16,17 +18,20 @@ export interface MentorProfile extends User {
   experience: number;
   expertise: string[];
   industries: string[];
-  chatRate: number;
-  callRate: number;
+  chatRatePerMinute: number;
+  audioCallRatePerMinute: number;
+  videoCallRatePerMinute: number;
   rating: number;
   totalReviews: number;
   totalEarnings: number;
+  totalSessions: number;
   isAvailable: boolean;
 }
 
 export interface ClientProfile extends User {
   userType: 'client';
   walletBalance: number;
+  totalSpent: number;
 }
 
 export interface Session {
