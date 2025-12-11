@@ -159,34 +159,16 @@ export default function ExpertDetailScreen() {
   const handleStartCall = (type: 'audio' | 'video') => {
     if (!expert) return;
 
-    // Check if running on web
-    if (Platform.OS === 'web') {
-      Alert.alert('Not Available', 'Voice and video calls are only available on mobile devices. Please use the mobile app to make calls.');
-      return;
-    }
-
-    Alert.alert(
-      'Start Call',
-      `Start ${type} call with ${expert.name}? Rate: ₹${expert.callRate}/min`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Start Call',
-          onPress: () => {
-            router.push({
-              pathname: '/call/[expertId]',
-              params: {
-                expertId: expert.id,
-                expertName: expert.name,
-                expertImage: expert.avatarUrl || '',
-                callType: type,
-                callRate: expert.callRate.toString()
-              }
-            });
-          }
-        }
-      ]
-    );
+    router.push({
+      pathname: '/call/[expertId]',
+      params: {
+        expertId: expert.id,
+        expertName: expert.name,
+        expertImage: expert.avatarUrl || '',
+        callType: type,
+        callRate: expert.callRate.toString()
+      }
+    });
   };
 
   const handleShareProfile = () => {

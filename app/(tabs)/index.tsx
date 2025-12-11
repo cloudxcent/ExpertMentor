@@ -315,37 +315,33 @@ export default function HomeScreen() {
           </View>
 
           <View style={styles.newsSection}>
-            <View style={styles.sectionHeader}>
-              <View style={styles.newsHeader}>
-                <Newspaper size={20} color="#1F2937" />
-                <Text style={styles.sectionTitle}>Mentorxity in News</Text>
-              </View>
+          <View style={styles.sectionHeader}>
+            <View style={styles.newsHeader}>
+              <Newspaper size={20} color="#1F2937" />
+              <Text style={styles.sectionTitle}>ExpertMentor in News</Text>
             </View>
+          </View>            <View style={styles.newsContainer}>
+            <TouchableOpacity style={styles.newsCard}>
+              <Image
+                source={{ uri: 'https://images.pexels.com/photos/3183197/pexels-photo-3183197.jpeg?auto=compress&cs=tinysrgb&w=400' }}
+                style={styles.newsImage}
+              />
+              <View style={styles.newsContent}>
+                <Text style={styles.newsTitle}>ExpertMentor Raises $10M in Series A Funding</Text>
+                <Text style={styles.newsDate}>TechCrunch • 2 days ago</Text>
+              </View>
+            </TouchableOpacity>
 
-            <View style={styles.newsContainer}>
-              <TouchableOpacity style={styles.newsCard}>
-                <Image
-                  source={{ uri: 'https://images.pexels.com/photos/3183197/pexels-photo-3183197.jpeg?auto=compress&cs=tinysrgb&w=400' }}
-                  style={styles.newsImage}
-                />
-                <View style={styles.newsContent}>
-                  <Text style={styles.newsTitle}>Mentorxity Raises $10M in Series A Funding</Text>
-                  <Text style={styles.newsDate}>TechCrunch • 2 days ago</Text>
-                </View>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.newsCard}>
-                <Image
-                  source={{ uri: 'https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg?auto=compress&cs=tinysrgb&w=400' }}
-                  style={styles.newsImage}
-                />
-                <View style={styles.newsContent}>
-                  <Text style={styles.newsTitle}>How Mentorxity is Revolutionizing Professional Consulting</Text>
-                  <Text style={styles.newsDate}>Forbes • 5 days ago</Text>
-                </View>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.newsCard}>
+            <TouchableOpacity style={styles.newsCard}>
+              <Image
+                source={{ uri: 'https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg?auto=compress&cs=tinysrgb&w=400' }}
+                style={styles.newsImage}
+              />
+              <View style={styles.newsContent}>
+                <Text style={styles.newsTitle}>How ExpertMentor is Revolutionizing Professional Consulting</Text>
+                <Text style={styles.newsDate}>Forbes • 5 days ago</Text>
+              </View>
+            </TouchableOpacity>              <TouchableOpacity style={styles.newsCard}>
                 <Image
                   source={{ uri: 'https://images.pexels.com/photos/3184360/pexels-photo-3184360.jpeg?auto=compress&cs=tinysrgb&w=400' }}
                   style={styles.newsImage}
@@ -448,7 +444,7 @@ export default function HomeScreen() {
           <View style={styles.sectionHeader}>
             <View style={styles.newsHeader}>
               <Newspaper size={20} color="#1F2937" />
-              <Text style={styles.sectionTitle}>Mentorxity in News</Text>
+              <Text style={styles.sectionTitle}>ExpertMentor in News</Text>
             </View>
           </View>
 
@@ -459,7 +455,7 @@ export default function HomeScreen() {
                 style={styles.newsImage}
               />
               <View style={styles.newsContent}>
-                <Text style={styles.newsTitle}>Mentorxity Raises $10M in Series A Funding</Text>
+                <Text style={styles.newsTitle}>ExpertMentor Raises $10M in Series A Funding</Text>
                 <Text style={styles.newsDate}>TechCrunch • 2 days ago</Text>
               </View>
             </TouchableOpacity>
@@ -470,7 +466,7 @@ export default function HomeScreen() {
                 style={styles.newsImage}
               />
               <View style={styles.newsContent}>
-                <Text style={styles.newsTitle}>How Mentorxity is Revolutionizing Professional Consulting</Text>
+                <Text style={styles.newsTitle}>How ExpertMentor is Revolutionizing Professional Consulting</Text>
                 <Text style={styles.newsDate}>Forbes • 5 days ago</Text>
               </View>
             </TouchableOpacity>
