@@ -5,7 +5,6 @@ import { Phone, PhoneOff, AlertCircle } from 'lucide-react-native';
 import { Audio } from 'expo-av';
 import { callSignaling, CallSession } from '../utils/callSignaling';
 import { auth } from '../config/firebase';
-import { storage, StorageKeys } from '../utils/storage';
 
 const { width, height } = Dimensions.get('window');
 

@@ -2,10 +2,8 @@ import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Image, ActivityIndicator, Badge, Alert } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { MessageCircle, Clock, AlertCircle, Phone, Camera } from 'lucide-react-native';
-import { db } from '../../config/firebase';
+import { db, auth } from '../../config/firebase';
 import { collection, onSnapshot, getDoc, doc, getDocs, query, orderBy, where } from 'firebase/firestore';
-import { auth } from '../../config/firebase';
-import { storage, StorageKeys } from '../../utils/storage';
 import { ensureMediaUrl } from '../../utils/firebaseStorageUrl';
 
 interface ChatSession {
@@ -32,14 +30,14 @@ export default function ChatTabScreen() {
   const loadUserAndSessions = async () => {
     try {
       setIsLoading(true);
-      const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-      if (!profileData?.id) {
-        console.warn('[ChatTab] No user profile found');
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        console.warn('[ChatTab] No authenticated user found');
         setIsLoading(false);
         return;
       }
 
-      console.log('[ChatTab] Loading sessions for user:', profileData.id);
+      console.log('[ChatTab] Loading sessions for user:', currentUser.uid);
       const sessionsRef = collection(db, 'chat_sessions');
       
       const unsubscribe = onSnapshot(sessionsRef, async (snapshot) => {
@@ -52,13 +50,13 @@ export default function ChatTabScreen() {
           const { user1Id, user2Id, createdAt, lastMessageAt } = sessionData;
 
           // Check if current user is part of this session
-          if (user1Id !== profileData.id && user2Id !== profileData.id) {
+          if (user1Id !== currentUser.uid && user2Id !== currentUser.uid) {
             continue;
           }
 
           console.log('[ChatTab] Processing session:', docSnap.id);
 
-          const otherUserId = user1Id === profileData.id ? user2Id : user1Id;
+          const otherUserId = user1Id === currentUser.uid ? user2Id : user1Id;
 
           try {
             const otherUserRef = doc(db, 'profiles', otherUserId);
@@ -80,7 +78,7 @@ export default function ChatTabScreen() {
                 // Count unread messages for current user
                 const unreadQuery = query(
                   messagesRef,
-                  where('recipientId', '==', profileData.id),
+                  where('recipientId', '==', currentUser.uid),
                   where('isRead', '==', false)
                 );
                 const unreadSnap = await getDocs(unreadQuery);

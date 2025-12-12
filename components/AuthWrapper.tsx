@@ -1,7 +1,6 @@
 import React, { useEffect, useState, createContext, useContext, ReactNode } from 'react';
 import { auth } from '../config/firebase';
 import { onAuthStateChanged, signOut as firebaseSignOut, User } from 'firebase/auth';
-import { storage, StorageKeys } from '../utils/storage';
 import { callListenerService } from '../utils/callListenerService';
 
 interface AuthContextType {
@@ -51,13 +50,8 @@ export default function AuthWrapper({ children }: AuthWrapperProps) {
           console.log('[AuthWrapper] Stopping call listener...');
           callListenerService.stopListening();
 
-          // Clear storage
-          try {
-            await storage.clear();
-            console.log('[AuthWrapper] Storage cleared');
-          } catch (err) {
-            console.error('[AuthWrapper] Error clearing storage:', err);
-          }
+          // Firestore automatically clears persistent cache on logout
+          console.log('[AuthWrapper] Firestore cache will be cleared on next auth');
         }
       } catch (error) {
         console.error('[AuthWrapper] Error in onAuthStateChanged:', error);
@@ -91,11 +85,8 @@ export default function AuthWrapper({ children }: AuthWrapperProps) {
       // Force set user to null even on error
       console.log('[AuthWrapper] Force setting user to null due to error');
       setUser(null);
-      try {
-        await storage.clear();
-      } catch (err) {
-        console.error('[AuthWrapper] Error clearing storage on error:', err);
-      }
+      // Firestore will clear persistent cache on signOut
+      console.log('[AuthWrapper] Firestore cache will be cleared on logout');
       throw error;
     }
   };

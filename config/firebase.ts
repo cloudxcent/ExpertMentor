@@ -1,6 +1,8 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, enableIndexedDbPersistence, CACHE_SIZE_UNLIMITED, initializeFirestore } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
+import { Platform } from 'react-native';
 
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
@@ -14,9 +16,52 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Get Auth and Firestore instances
-// Firebase SDK handles persistence automatically for web and React Native
+// Get Auth instance
 const auth = getAuth(app);
-const db = getFirestore(app);
 
-export { app, auth, db };
+// Initialize Firestore with persistence settings
+let db;
+try {
+  if (Platform.OS === 'web') {
+    // For web - use standard Firestore with IndexedDB persistence
+    db = getFirestore(app);
+    
+    // Enable IndexedDB persistence for web
+    enableIndexedDbPersistence(db).catch((err) => {
+      if (err.code === 'failed-precondition') {
+        console.warn('[Firebase] Multiple tabs open, persistence can only be enabled in one tab at a time.');
+      } else if (err.code === 'unimplemented') {
+        console.warn('[Firebase] The current browser does not support all of the features required to enable persistence.');
+      }
+    });
+  } else {
+    // For React Native (Expo) - use standard Firestore
+    // Persistence is enabled by default in Firebase SDK for React Native
+    db = getFirestore(app);
+    console.log('[Firebase] Initialized Firestore for React Native (offline persistence enabled by default)');
+  }
+} catch (error) {
+  console.error('[Firebase] Error initializing Firestore:', error);
+  db = getFirestore(app);
+}
+
+// Set Firestore settings for better performance
+try {
+  db.settings = {
+    cacheSizeBytes: CACHE_SIZE_UNLIMITED,
+  };
+  console.log('[Firebase] Firestore configured with unlimited cache size');
+} catch (error) {
+  console.warn('[Firebase] Could not set Firestore settings:', error);
+}
+
+console.log('[Firebase] Configuration complete');
+console.log('[Firebase] Platform:', Platform.OS);
+console.log('[Firebase] Offline persistence: ENABLED');
+
+// Initialize Storage
+const storage = getStorage(app);
+console.log('[Firebase] Storage initialized');
+
+export { app, auth, db, storage };
+

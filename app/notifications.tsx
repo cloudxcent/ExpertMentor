@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { ArrowLeft, Bell, MessageCircle, Star, DollarSign, CheckCircle, AlertCircle } from 'lucide-react-native';
-import { storage, StorageKeys } from '../utils/storage';
+import { auth } from '../config/firebase';
 import { api } from '../utils/api';
 
 interface Notification {
@@ -39,15 +39,15 @@ export default function NotificationsScreen() {
 
     const setupRealtimeListeners = async () => {
       try {
-        const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-        if (!profileData?.id) return;
+        const currentUser = auth.currentUser;
+        if (!currentUser) return;
 
-        notificationUnsubscribe = api.subscribeToNotifications(profileData.id, (notifs) => {
+        notificationUnsubscribe = api.subscribeToNotifications(currentUser.uid, (notifs) => {
           setNotifications(notifs);
           setIsLoading(false);
         });
 
-        messagesUnsubscribe = api.subscribeToUnreadMessages(profileData.id, (count) => {
+        messagesUnsubscribe = api.subscribeToUnreadMessages(currentUser.uid, (count) => {
           setTotalUnreadCount(count);
         });
       } catch (error) {
@@ -76,10 +76,10 @@ export default function NotificationsScreen() {
 
   const loadNotifications = async () => {
     try {
-      const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-      if (!profileData?.id) return;
+      const currentUser = auth.currentUser;
+      if (!currentUser) return;
 
-      const notifs = await api.getNotifications(profileData.id);
+      const notifs = await api.getNotifications(currentUser.uid);
       setNotifications(notifs);
     } catch (error) {
       console.error('Error loading notifications:', error);
@@ -91,10 +91,10 @@ export default function NotificationsScreen() {
 
   const loadUnreadMessages = async () => {
     try {
-      const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-      if (!profileData?.id) return;
+      const currentUser = auth.currentUser;
+      if (!currentUser) return;
 
-      const count = await api.getUnreadMessageCount(profileData.id);
+      const count = await api.getUnreadMessageCount(currentUser.uid);
       setTotalUnreadCount(count);
     } catch (error) {
       console.error('Error loading unread messages:', error);
@@ -123,7 +123,10 @@ export default function NotificationsScreen() {
 
   const handleUnreadMessagePress = async (message: UnreadMessage) => {
     // Mark messages as read
-    await api.markChatMessagesAsRead(message.sessionId, (await storage.getItem(StorageKeys.USER_PROFILE))?.id || '');
+    const currentUser = auth.currentUser;
+    if (currentUser) {
+      await api.markChatMessagesAsRead(message.sessionId, currentUser.uid);
+    }
     
     // Navigate to chat
     router.push(`/chat/${message.otherUserId}`);
@@ -131,10 +134,10 @@ export default function NotificationsScreen() {
 
   const handleMarkAllRead = async () => {
     try {
-      const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-      if (!profileData?.id) return;
+      const currentUser = auth.currentUser;
+      if (!currentUser) return;
 
-      await api.markAllNotificationsAsRead(profileData.id);
+      await api.markAllNotificationsAsRead(currentUser.uid);
       setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
     } catch (error) {
       console.error('Error marking all as read:', error);

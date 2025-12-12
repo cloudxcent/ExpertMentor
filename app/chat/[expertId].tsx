@@ -4,7 +4,8 @@ import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Send, Phone, Camera, MoreVertical, Wallet, Plus, Smile, ImagePlus, X } from 'lucide-react-native';
 import { db, auth } from '../../config/firebase';
 import { collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, getDoc, doc, setDoc, getDocs, updateDoc } from 'firebase/firestore';
-import { storage, StorageKeys } from '../../utils/storage';
+import { storage } from '../../config/firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { ensureMediaUrl } from '../../utils/firebaseStorageUrl';
 import { createMessageNotification } from '../../utils/notifications';
 import { api } from '../../utils/api.firebase';
@@ -50,6 +51,13 @@ export default function ChatScreen() {
   const [callRatePerMinute, setCallRatePerMinute] = useState<number>(0);
   const [isRateLoaded, setIsRateLoaded] = useState(false);
   
+  // Session billing states
+  const [isChatActive, setIsChatActive] = useState(false);
+  const [sessionStartTime, setSessionStartTime] = useState<number | null>(null);
+  const [deductedAmount, setDeductedAmount] = useState<number>(0);
+  const [hasAddedBalance, setHasAddedBalance] = useState(false);
+  const [payerId, setPayerId] = useState<string | null>(null); // Track who initiated/paid for chat
+  
   const scrollViewRef = useRef<ScrollView>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const hasScrolledRef = useRef(false);
@@ -70,22 +78,22 @@ export default function ChatScreen() {
     try {
       console.log('[Chat] Initializing with params - expertId:', expert, 'expertName:', expertName);
       
-      const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-      if (!profileData?.id) {
-        console.error('[Chat] ✗ No user ID found in storage');
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        console.error('[Chat] ✗ No authenticated user found');
         setIsLoading(false);
         router.back();
         return;
       }
 
-      console.log('[Chat] ✓ Current user loaded:', profileData.id);
-      setCurrentUserId(profileData.id);
-      setCurrentUserName(profileData.name || 'User');
+      console.log('[Chat] ✓ Current user loaded:', currentUser.uid);
+      setCurrentUserId(currentUser.uid);
+      setCurrentUserName(currentUser.displayName || 'User');
 
       // Check user wallet balance
       try {
         setIsCheckingBalance(true);
-        const balanceResult = await api.getWalletBalance(profileData.id);
+        const balanceResult = await api.getWalletBalance(currentUser.uid);
         const balance = balanceResult.success ? (balanceResult.balance || 0) : 0;
         setUserBalance(balance);
         console.log('[Chat] ✓ User balance loaded:', balance);
@@ -127,20 +135,44 @@ export default function ChatScreen() {
         console.log('[Chat] ✓ Chat rate per minute set to:', chatRate, 'Call rate per minute set to:', callRate, 'from params');
       }
 
-      const chatSessionId = [profileData.id, expert].sort().join('_');
+      const chatSessionId = [currentUser.uid, expert].sort().join('_');
       console.log('[Chat] Session ID:', chatSessionId);
       setSessionId(chatSessionId);
 
       const sessionRef = doc(db, 'chat_sessions', chatSessionId);
       const sessionSnap = await getDoc(sessionRef);
       if (!sessionSnap.exists()) {
-        console.log('[Chat] Creating new session');
+        console.log('[Chat] Creating new session with initiator as payer');
+        setPayerId(currentUser.uid); // Current user is the one who initiated/paid
         await setDoc(sessionRef, {
-          user1Id: profileData.id,
+          user1Id: currentUser.uid,
           user2Id: expert,
+          payerId: currentUser.uid, // Track who paid for this chat
           createdAt: serverTimestamp(),
-          lastMessageAt: serverTimestamp()
+          lastMessageAt: serverTimestamp(),
+          isActive: true // Chat is active from the start
         });
+        // Auto-enable chat for initiator
+        setIsChatActive(true);
+        setSessionStartTime(Date.now());
+        setDeductedAmount(0);
+        console.log('[Chat] ✅ Chat auto-enabled for payer (initiator)');
+      } else {
+        // Session exists - check if current user is the payer
+        const existingPayerId = sessionSnap.data().payerId || sessionSnap.data().user1Id;
+        setPayerId(existingPayerId);
+        
+        if (currentUser.uid === existingPayerId) {
+          // Current user is the payer - enable billing
+          setIsChatActive(true);
+          setSessionStartTime(Date.now());
+          setDeductedAmount(0);
+          console.log('[Chat] ✅ Chat enabled for payer');
+        } else {
+          // Current user is the receiver - no billing needed, chat enabled by default
+          setIsChatActive(true);
+          console.log('[Chat] ✅ Chat auto-enabled for receiver (other party joins free)');
+        }
       }
 
       try {
@@ -172,7 +204,7 @@ export default function ChatScreen() {
         try {
           const unreadQuery = query(
             messagesRef,
-            where('recipientId', '==', profileData.id),
+            where('recipientId', '==', currentUser.uid),
             where('isRead', '==', false)
           );
           const unreadSnapshot = await getDocs(unreadQuery);
@@ -264,12 +296,19 @@ export default function ChatScreen() {
     useCallback(() => {
       const refreshBalance = async () => {
         try {
-          const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-          if (profileData?.id) {
-            const balanceResult = await api.getWalletBalance(profileData.id);
+          const currentUser = auth.currentUser;
+          if (currentUser) {
+            const balanceResult = await api.getWalletBalance(currentUser.uid);
             const balance = balanceResult.success ? (balanceResult.balance || 0) : 0;
             setUserBalance(balance);
             console.log('[Chat] ✓ Balance refreshed on screen focus:', balance);
+            
+            // If user added balance, mark it and hide modal
+            if (balance > 0) {
+              setHasAddedBalance(true);
+              setShowBalanceModal(false);
+              console.log('[Chat] ✓ User added balance, auto-enabling chat');
+            }
           }
         } catch (balanceError) {
           console.warn('[Chat] ⚠ Error refreshing balance:', balanceError);
@@ -280,15 +319,95 @@ export default function ChatScreen() {
     }, [])
   );
 
-  // Auto-show balance modal when rate is loaded and balance is insufficient
+  // Auto-deduct balance per minute ONLY from payer, not receiver
   useEffect(() => {
-    if (isRateLoaded && isLoading === false) {
-      if (userBalance < chatRatePerMinute) {
-        console.log('[Chat] ✓ Auto-showing balance modal - Balance:', userBalance, 'Rate:', chatRatePerMinute);
+    if (!isChatActive || !sessionStartTime || userBalance <= 0 || !payerId) {
+      return;
+    }
+
+    // Only run billing for the payer
+    const isPayingUser = payerId === currentUserId;
+    if (!isPayingUser) {
+      console.log('[Chat] Current user is receiver - no billing applied');
+      return;
+    }
+
+    const billingInterval = setInterval(async () => {
+      const elapsedSeconds = Math.floor((Date.now() - sessionStartTime) / 1000);
+      const elapsedMinutes = Math.ceil(elapsedSeconds / 60);
+      const expectedDeduction = elapsedMinutes * chatRatePerMinute;
+      const deductionNeeded = expectedDeduction - deductedAmount;
+
+      if (deductionNeeded >= chatRatePerMinute && userBalance >= chatRatePerMinute) {
+        console.log('[Chat] 💳 Deducting ₹', chatRatePerMinute, 'from payer for', elapsedMinutes, 'minute(s)');
+        
+        // Update local balance
+        const newBalance = userBalance - chatRatePerMinute;
+        setUserBalance(newBalance);
+        setDeductedAmount(expectedDeduction);
+
+        // Update Firestore wallet - ONLY for payer
+        try {
+          const currentUser = auth.currentUser;
+          if (currentUser) {
+            const walletRef = doc(db, 'wallet_balance', currentUser.uid);
+            await updateDoc(walletRef, {
+              balance: newBalance,
+              lastDeductedAt: serverTimestamp(),
+              lastSessionId: sessionId,
+              totalDeducted: (deductedAmount + chatRatePerMinute)
+            });
+            console.log('[Chat] ✓ Payer wallet updated. New balance:', newBalance);
+          }
+        } catch (error) {
+          console.error('[Chat] ✗ Error updating payer wallet:', error);
+        }
+      } else if (userBalance < chatRatePerMinute) {
+        // Payer's balance exhausted - end session
+        console.log('[Chat] ✗ Payer balance exhausted. Ending session.');
+        setIsChatActive(false);
         setShowBalanceModal(true);
+        Alert.alert('Balance Exhausted', 'Your chat session has ended due to insufficient balance.');
+      }
+    }, 60000); // Every minute
+
+    return () => clearInterval(billingInterval);
+  }, [isChatActive, sessionStartTime, userBalance, chatRatePerMinute, deductedAmount, payerId, currentUserId]);
+
+  // Auto-show balance modal ONLY if current user is the payer AND has insufficient balance
+  // Other party (receiver) joins free
+  useEffect(() => {
+    if (isRateLoaded && isLoading === false && payerId) {
+      const isCurrentUserPayer = payerId === currentUserId;
+      
+      if (isCurrentUserPayer && !hasAddedBalance) {
+        // Current user is payer - check balance
+        if (userBalance < chatRatePerMinute) {
+          console.log('[Chat] ✓ Current user is payer - showing balance modal. Balance:', userBalance, 'Rate:', chatRatePerMinute);
+          setShowBalanceModal(true);
+        } else {
+          // Payer has sufficient balance
+          setShowBalanceModal(false);
+          setIsChatActive(true);
+          setSessionStartTime(Date.now());
+          setDeductedAmount(0);
+          console.log('[Chat] ✅ Payer has sufficient balance - chat enabled');
+        }
+      } else if (!isCurrentUserPayer) {
+        // Current user is receiver (not payer) - always enable chat
+        console.log('[Chat] ✅ Current user is receiver - chat auto-enabled for free');
+        setShowBalanceModal(false);
+        setIsChatActive(true);
+      } else if (hasAddedBalance && userBalance >= chatRatePerMinute) {
+        // Payer added balance
+        setShowBalanceModal(false);
+        setIsChatActive(true);
+        setSessionStartTime(Date.now());
+        setDeductedAmount(0);
+        console.log('[Chat] ✅ Payer added balance - chat enabled');
       }
     }
-  }, [isRateLoaded, userBalance, chatRatePerMinute, isLoading]);
+  }, [isRateLoaded, userBalance, chatRatePerMinute, isLoading, hasAddedBalance, payerId, currentUserId]);
 
   const pickImage = async () => {
     try {
@@ -304,35 +423,52 @@ export default function ChatScreen() {
         mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [1, 1],
-        quality: 0.4,
+        quality: 0.7,
+        base64: true, // Get base64 directly from picker
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        const imageUri = result.assets[0].uri;
-        console.log('[Chat] Image selected:', imageUri);
+        const asset = result.assets[0];
+        console.log('[Chat] 📸 Image selected');
         
         try {
-          // Convert image to base64
-          const response = await fetch(imageUri);
-          const blob = await response.blob();
-          const reader = new FileReader();
+          let base64String = asset.base64;
           
-          reader.onloadend = () => {
-            const base64 = (reader.result as string).split(',')[1];
-            const dataUri = `data:image/jpeg;base64,${base64}`;
-            console.log('[Chat] Converted to base64, size:', dataUri.length);
-            setSelectedImage(dataUri);
-          };
+          // If base64 not available from picker, read from file system
+          if (!base64String) {
+            console.log('[Chat] Reading image from file system...');
+            base64String = await FileSystem.readAsStringAsync(asset.uri, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+          }
+
+          if (!base64String) {
+            throw new Error('Failed to get base64 from image');
+          }
+
+          console.log('[Chat] 📤 Uploading image to Firebase Storage...');
           
-          reader.onerror = () => {
-            console.error('[Chat] FileReader error');
-            setSelectedImage(imageUri);
-          };
+          // Convert base64 to blob and upload to Firebase Storage
+          const filename = `chat/${sessionId}/${currentUserId}_${Date.now()}.jpg`;
+          const storageRef = ref(storage, filename);
           
-          reader.readAsDataURL(blob);
+          // Convert base64 string to blob
+          const binaryString = atob(base64String);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          const blob = new Blob([bytes], { type: 'image/jpeg' });
+          
+          // Upload to Firebase Storage
+          await uploadBytes(storageRef, blob);
+          const downloadURL = await getDownloadURL(storageRef);
+          
+          console.log('[Chat] ✅ Image uploaded to Firebase Storage. URL:', downloadURL);
+          setSelectedImage(downloadURL); // Store Firebase Storage URL
         } catch (error) {
-          console.error('[Chat] Error converting image:', error);
-          setSelectedImage(imageUri);
+          console.error('[Chat] Error uploading image to Firebase:', error);
+          alert('Failed to upload image to Firebase. Please try again.');
         }
       }
     } catch (error) {
@@ -346,9 +482,9 @@ export default function ChatScreen() {
   };
 
   const handleSendMessage = async () => {
-    // Check balance before allowing message
-    if (userBalance < chatRatePerMinute) {
-      console.log('[Chat] ✗ Insufficient balance. User balance:', userBalance, 'Chat rate:', chatRatePerMinute);
+    // Only check if chat is active (balance has been added and session started)
+    if (!isChatActive) {
+      console.log('[Chat] ✗ Chat not active. Please add balance to continue.');
       setShowBalanceModal(true);
       return;
     }
@@ -383,7 +519,9 @@ export default function ChatScreen() {
         timestamp: serverTimestamp(),
         createdAt: new Date().toISOString(),
         isRead: false,
-        mediaType: selectedImage ? 'image' : 'text'
+        mediaType: selectedImage ? 'image' : 'text',
+        sessionId: sessionId,
+        billedAmount: chatRatePerMinute
       };
 
       // Store image as base64 data URI if selected
@@ -393,16 +531,21 @@ export default function ChatScreen() {
 
       const docRef = await addDoc(messagesRef, messageData);
 
-      console.log('[Chat] ✓ Message saved:', docRef.id);
+      console.log('[Chat] ✓ Message saved:', docRef.id, '| Billing rate applied:', chatRatePerMinute);
 
-      await setDoc(sessionRef, { lastMessageAt: serverTimestamp() }, { merge: true });
-      console.log('[Chat] ✓ Session updated');
+      await setDoc(sessionRef, { 
+        lastMessageAt: serverTimestamp(),
+        isActive: true,
+        lastBilledAmount: chatRatePerMinute,
+        messageCount: messages.length + 1
+      }, { merge: true });
+      console.log('[Chat] ✓ Session updated with billing info');
 
       // Create notification for the recipient with unread count
       try {
-        const recipientRef = doc(db, 'chat_sessions', sessionId, 'messages');
+        const messagesRef = collection(db, 'chat_sessions', sessionId, 'messages');
         const unreadQuery = query(
-          recipientRef,
+          messagesRef,
           where('recipientId', '==', expert),
           where('isRead', '==', false)
         );
@@ -416,6 +559,7 @@ export default function ChatScreen() {
           messageText || '📸 Image',
           unreadCount
         );
+        console.log('[Chat] ✓ Notification created for recipient');
       } catch (notifError) {
         console.warn('[Chat] ⚠ Failed to create notification:', notifError);
         // Don't fail message send if notification fails
@@ -711,6 +855,7 @@ export default function ChatScreen() {
             <Image 
               source={{ uri: selectedImage }} 
               style={styles.imagePreview}
+              resizeMode="cover"
               onError={(e) => console.log('[Chat] Preview image error:', e)}
             />
             <TouchableOpacity
@@ -754,11 +899,11 @@ export default function ChatScreen() {
 
         {/* Input */}
         <View style={styles.inputContainer}>
-          {isRateLoaded && userBalance < chatRatePerMinute && (
+          {isRateLoaded && !isChatActive && userBalance < chatRatePerMinute && (
             <View style={styles.balanceWarningBanner}>
               <Wallet size={16} color="#EF4444" />
               <Text style={styles.balanceWarningText}>
-                Insufficient balance ({formatCurrency(userBalance)} needed {formatCurrency(chatRatePerMinute)})
+                Add balance to enable chat ({formatCurrency(chatRatePerMinute)}/min)
               </Text>
               <TouchableOpacity 
                 style={styles.topUpButton}
@@ -773,16 +918,16 @@ export default function ChatScreen() {
           <TouchableOpacity
             style={styles.iconButton}
             onPress={pickImage}
-            disabled={isSending || !isRateLoaded || userBalance < chatRatePerMinute}
+            disabled={isSending || !isRateLoaded || !isChatActive}
           >
-            <ImagePlus size={20} color={!isRateLoaded || userBalance < chatRatePerMinute ? "#D1D5DB" : "#2563EB"} />
+            <ImagePlus size={20} color={!isRateLoaded || !isChatActive ? "#D1D5DB" : "#2563EB"} />
           </TouchableOpacity>
           
           <TextInput
-            style={[styles.input, (!isRateLoaded || userBalance < chatRatePerMinute) && styles.disabledInput]}
+            style={[styles.input, (!isRateLoaded || !isChatActive) && styles.disabledInput]}
             value={newMessage}
             onChangeText={setNewMessage}
-            placeholder={!isRateLoaded || userBalance < chatRatePerMinute ? "Add balance to chat" : "Type a message..."}
+            placeholder={!isRateLoaded || !isChatActive ? "Add balance to chat" : "Type a message..."}
             placeholderTextColor="#9CA3AF"
             multiline
             maxLength={500}
@@ -790,21 +935,21 @@ export default function ChatScreen() {
             autoCorrect={true}
             returnKeyType="default"
             blurOnSubmit={false}
-            editable={!isSending && isRateLoaded && userBalance >= chatRatePerMinute}
+            editable={!isSending && isRateLoaded && isChatActive}
           />
           
           <TouchableOpacity
             style={styles.iconButton}
             onPress={() => setShowEmojiPicker(!showEmojiPicker)}
-            disabled={isSending || !isRateLoaded || userBalance < chatRatePerMinute}
+            disabled={isSending || !isRateLoaded || !isChatActive}
           >
-            <Smile size={20} color={!isRateLoaded || userBalance < chatRatePerMinute ? "#D1D5DB" : "#2563EB"} />
+            <Smile size={20} color={!isRateLoaded || !isChatActive ? "#D1D5DB" : "#2563EB"} />
           </TouchableOpacity>
           
           <TouchableOpacity
-            style={[styles.sendButton, (isSending || (!newMessage.trim() && !selectedImage) || !isRateLoaded || userBalance < chatRatePerMinute) && styles.sendButtonDisabled]}
+            style={[styles.sendButton, (isSending || (!newMessage.trim() && !selectedImage) || !isRateLoaded || !isChatActive) && styles.sendButtonDisabled]}
             onPress={handleSendMessage}
-            disabled={isSending || (!newMessage.trim() && !selectedImage) || !isRateLoaded || userBalance < chatRatePerMinute}
+            disabled={isSending || (!newMessage.trim() && !selectedImage) || !isRateLoaded || !isChatActive}
           >
             {isSending ? (
               <ActivityIndicator size="small" color="#FFFFFF" />
@@ -1114,7 +1259,6 @@ const styles = StyleSheet.create({
     height: 150,
     borderRadius: 8,
     marginBottom: 8,
-    resizeMode: 'cover',
   },
   imagePreviewContainer: {
     paddingHorizontal: 16,
@@ -1127,7 +1271,6 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 120,
     borderRadius: 12,
-    resizeMode: 'cover',
   },
   removeImageButton: {
     position: 'absolute',

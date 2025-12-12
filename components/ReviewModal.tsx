@@ -11,7 +11,8 @@ import {
 } from 'react-native';
 import { Star, X } from 'lucide-react-native';
 import { api } from '../utils/api';
-import { storage, StorageKeys } from '../utils/storage';
+import { auth, db } from '../config/firebase';
+import { doc, getDoc } from 'firebase/firestore';
 
 interface ReviewModalProps {
   visible: boolean;
@@ -43,9 +44,9 @@ export default function ReviewModal({
     try {
       setIsSubmitting(true);
 
-      // Get current user profile
-      const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-      if (!profileData?.id) {
+      // Get current user ID from Firebase Auth
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
         Alert.alert('Error', 'Unable to identify user');
         return;
       }
@@ -53,7 +54,7 @@ export default function ReviewModal({
       // Create review
       const result = await api.createReview({
         expertId,
-        clientId: profileData.id,
+        clientId: currentUser.uid,
         rating,
         comment: comment.trim() || undefined,
       });

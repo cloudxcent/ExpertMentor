@@ -2,9 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Image, ActivityIndicator, SectionList } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { ArrowLeft, MessageCircle, Phone, CheckCircle, Clock, DollarSign, Star, User } from 'lucide-react-native';
-import { db } from '../config/firebase';
+import { db, auth } from '../config/firebase';
 import { collection, onSnapshot, getDoc, doc, getDocs, query, orderBy, where } from 'firebase/firestore';
-import { storage, StorageKeys } from '../utils/storage';
 import { ensureMediaUrl } from '../utils/firebaseStorageUrl';
 
 interface ChatSession {
@@ -44,22 +43,27 @@ export default function MySessionsScreen() {
   const loadUserAndSessions = async () => {
     try {
       setIsLoading(true);
-      const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-      if (!profileData?.id) {
-        console.warn('[MySessions] No user profile found');
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        console.warn('[MySessions] No authenticated user found');
         setIsLoading(false);
         return;
       }
 
-      setUserProfile(profileData);
+      setUserProfile({ id: currentUser.uid, email: currentUser.email });
 
       // Load chat sessions if user is not an expert
-      if (profileData.userType !== 'expert') {
-        console.log('[MySessions] Loading chat sessions for user:', profileData.id);
+      // Fetch user profile to check userType
+      const profileRef = doc(db, 'profiles', currentUser.uid);
+      const profileSnap = await getDoc(profileRef);
+      const userType = profileSnap.exists() ? profileSnap.data().userType : 'client';
+      
+      if (userType !== 'expert') {
+        console.log('[MySessions] Loading chat sessions for user:', currentUser.uid);
         const sessionsRef = collection(db, 'chat_sessions');
         
         // Create queries for sessions where user is user1 or user2
-        const q1 = query(sessionsRef, where('user1Id', '==', profileData.id));
+        const q1 = query(sessionsRef, where('user1Id', '==', currentUser.uid));
         
         // Subscribe to user1 sessions
         const unsubscribe1 = onSnapshot(q1, async (snapshot1) => {
@@ -72,7 +76,7 @@ export default function MySessionsScreen() {
 
             console.log('[MySessions] Processing session:', docSnap.id);
 
-            const otherUserId = user1Id === profileData.id ? user2Id : user1Id;
+            const otherUserId = user1Id === currentUser.uid ? user2Id : user1Id;
 
             try {
               const otherUserRef = doc(db, 'profiles', otherUserId);
@@ -131,7 +135,7 @@ export default function MySessionsScreen() {
           }
 
           // Also get user2 sessions
-          const q2 = query(sessionsRef, where('user2Id', '==', profileData.id));
+          const q2 = query(sessionsRef, where('user2Id', '==', currentUser.uid));
           try {
             const snapshot2 = await getDocs(q2);
             console.log('[MySessions] User2 sessions:', snapshot2.size);
@@ -140,7 +144,7 @@ export default function MySessionsScreen() {
               const sessionData = docSnap.data();
               const { user1Id, user2Id, createdAt, lastMessageAt } = sessionData;
 
-              const otherUserId = user1Id === profileData.id ? user2Id : user1Id;
+              const otherUserId = user1Id === currentUser.uid ? user2Id : user1Id;
 
               try {
                 const otherUserRef = doc(db, 'profiles', otherUserId);
@@ -215,7 +219,7 @@ export default function MySessionsScreen() {
         unsubscribeRef.current = unsubscribe1;
       } else {
         // Load expert sessions
-        loadExpertSessions(profileData.id);
+        loadExpertSessions(currentUser.uid);
       }
     } catch (error) {
       console.error('[MySessions] ✗ Error loading sessions:', error);

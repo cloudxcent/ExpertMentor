@@ -4,7 +4,6 @@ import {
   GoogleAuthProvider,
 } from 'firebase/auth';
 import { doc, setDoc, getDoc, Timestamp } from 'firebase/firestore';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Initialize Google Auth Provider
 const googleProvider = new GoogleAuthProvider();
@@ -97,9 +96,10 @@ export const handleGoogleAuthSuccess = async (
       console.log('[GoogleAuth] User profile updated:', user.uid);
     }
 
-    await AsyncStorage.setItem('userData', JSON.stringify(user));
-    await AsyncStorage.setItem('userType', userType);
-
+    // Profile created/updated in Firestore automatically
+    // No localStorage needed - Firebase Auth handles user session
+    // User data flows from Firestore via real-time listeners
+    
     return { success: true };
   } catch (error: any) {
     console.error('[GoogleAuth] Error:', error);
@@ -117,8 +117,7 @@ export const logoutGoogle = async (): Promise<{ success: boolean; error?: string
   try {
     console.log('[GoogleAuth] Logging out...');
     await auth.signOut();
-    await AsyncStorage.removeItem('userData');
-    await AsyncStorage.removeItem('userType');
+    // No localStorage to clear - Firebase Auth handles session cleanup
     console.log('[GoogleAuth] Logout successful');
     return { success: true };
   } catch (error: any) {

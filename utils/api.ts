@@ -1246,3 +1246,408 @@ export const api = {
   },
 };
 
+// USER PREFERENCES COLLECTION
+export const userPreferences = {
+  async getPreferences(userId: string): Promise<any> {
+    try {
+      const docRef = doc(db, 'user_preferences', userId);
+      const docSnap = await getDoc(docRef);
+      
+      if (docSnap.exists()) {
+        return { success: true, data: docSnap.data() };
+      } else {
+        // Create default preferences if not exists
+        const defaultPrefs = {
+          notificationsEnabled: true,
+          chatNotifications: true,
+          callNotifications: true,
+          emailNotifications: false,
+          darkMode: false,
+          theme: 'light',
+          language: 'en',
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
+        };
+        
+        await setDoc(docRef, defaultPrefs);
+        return { success: true, data: defaultPrefs };
+      }
+    } catch (error: any) {
+      console.error('[UserPreferences] Error getting preferences:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async updatePreferences(userId: string, preferences: any): Promise<any> {
+    try {
+      const docRef = doc(db, 'user_preferences', userId);
+      await updateDoc(docRef, {
+        ...preferences,
+        updatedAt: Timestamp.now(),
+      });
+      return { success: true };
+    } catch (error: any) {
+      console.error('[UserPreferences] Error updating preferences:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  subscribeToPreferences(userId: string, onUpdate: (data: any) => void): () => void {
+    try {
+      const docRef = doc(db, 'user_preferences', userId);
+      const unsubscribe = onSnapshot(docRef, (docSnap) => {
+        if (docSnap.exists()) {
+          onUpdate(docSnap.data());
+        }
+      });
+      return unsubscribe;
+    } catch (error: any) {
+      console.error('[UserPreferences] Error subscribing to preferences:', error);
+      return () => {};
+    }
+  },
+};
+
+// WALLET BALANCE COLLECTION
+export const walletApi = {
+  async getBalance(userId: string): Promise<any> {
+    try {
+      const docRef = doc(db, 'wallet_balance', userId);
+      const docSnap = await getDoc(docRef);
+      
+      if (docSnap.exists()) {
+        return { success: true, data: docSnap.data() };
+      } else {
+        // Create default wallet if not exists
+        const defaultWallet = {
+          balance: 0,
+          currency: 'INR',
+          lastUpdated: Timestamp.now(),
+          transactions: [],
+        };
+        
+        await setDoc(docRef, defaultWallet);
+        return { success: true, data: defaultWallet };
+      }
+    } catch (error: any) {
+      console.error('[Wallet] Error getting balance:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async updateBalance(userId: string, amount: number, description: string): Promise<any> {
+    try {
+      const docRef = doc(db, 'wallet_balance', userId);
+      const docSnap = await getDoc(docRef);
+      
+      const currentBalance = docSnap.exists() ? docSnap.data().balance : 0;
+      const newBalance = currentBalance + amount;
+      
+      await updateDoc(docRef, {
+        balance: newBalance,
+        lastUpdated: Timestamp.now(),
+        lastTransaction: {
+          amount,
+          description,
+          timestamp: Timestamp.now(),
+          balance: newBalance,
+        },
+      });
+      
+      return { success: true, data: { balance: newBalance } };
+    } catch (error: any) {
+      console.error('[Wallet] Error updating balance:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  subscribeToBalance(userId: string, onUpdate: (data: any) => void): () => void {
+    try {
+      const docRef = doc(db, 'wallet_balance', userId);
+      const unsubscribe = onSnapshot(docRef, (docSnap) => {
+        if (docSnap.exists()) {
+          onUpdate(docSnap.data());
+        }
+      });
+      return unsubscribe;
+    } catch (error: any) {
+      console.error('[Wallet] Error subscribing to balance:', error);
+      return () => {};
+    }
+  },
+};
+
+// USER CACHE COLLECTION - For frequently accessed data
+export const cacheApi = {
+  async getCachedData(userId: string, key: string): Promise<any> {
+    try {
+      const docRef = doc(db, 'user_cache', userId);
+      const docSnap = await getDoc(docRef);
+      
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        return data[key] || null;
+      }
+      return null;
+    } catch (error: any) {
+      console.error('[Cache] Error getting cached data:', error);
+      return null;
+    }
+  },
+
+  async setCachedData(userId: string, key: string, value: any, ttlSeconds: number = 300): Promise<any> {
+    try {
+      const docRef = doc(db, 'user_cache', userId);
+      const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+      
+      const docSnap = await getDoc(docRef);
+      const existingData = docSnap.exists() ? docSnap.data() : {};
+      
+      await setDoc(docRef, {
+        ...existingData,
+        [key]: value,
+        [`${key}_expires`]: expiresAt,
+        lastUpdated: Timestamp.now(),
+      }, { merge: true });
+      
+      return { success: true };
+    } catch (error: any) {
+      console.error('[Cache] Error setting cached data:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  async clearCache(userId: string): Promise<any> {
+    try {
+      const docRef = doc(db, 'user_cache', userId);
+      await setDoc(docRef, { lastCleared: Timestamp.now() });
+      return { success: true };
+    } catch (error: any) {
+      console.error('[Cache] Error clearing cache:', error);
+      return { success: false, error: error.message };
+    }
+  },
+};
+
+// FREE CHAT TRIAL MANAGEMENT
+export const chatTrialApi = {
+  /**
+   * Initialize 60-second free trial for new chat session
+   */
+  async initializeFreeTrial(sessionId: string, userId: string, expertId: string): Promise<any> {
+    try {
+      const trialRef = doc(db, 'chat_trials', sessionId);
+      const now = Timestamp.now();
+      const trialEndTime = new Timestamp(now.seconds + 60, now.nanoseconds);
+
+      const trialData = {
+        sessionId,
+        userId,
+        expertId,
+        trialStartTime: now,
+        trialEndTime: trialEndTime,
+        isTrialActive: true,
+        chatEnabled: true,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      await setDoc(trialRef, trialData);
+      console.log('[ChatTrial] Free trial initialized:', sessionId);
+
+      return {
+        success: true,
+        data: {
+          sessionId,
+          trialStartTime: now,
+          trialEndTime: trialEndTime,
+          secondsRemaining: 60,
+          message: 'Free 60-second trial started! 🎉',
+        },
+      };
+    } catch (error: any) {
+      console.error('[ChatTrial] Error initializing trial:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  /**
+   * Get current trial status for a chat session
+   */
+  async getTrialStatus(sessionId: string): Promise<any> {
+    try {
+      const trialRef = doc(db, 'chat_trials', sessionId);
+      const trialSnap = await getDoc(trialRef);
+
+      if (!trialSnap.exists()) {
+        return { success: false, error: 'No trial found for this session' };
+      }
+
+      const data = trialSnap.data();
+      const now = Timestamp.now();
+      const trialEnd = data.trialEndTime as Timestamp;
+      const secondsRemaining = Math.max(0, trialEnd.seconds - now.seconds);
+
+      return {
+        success: true,
+        data: {
+          sessionId,
+          userId: data.userId,
+          expertId: data.expertId,
+          trialStartTime: data.trialStartTime,
+          trialEndTime: data.trialEndTime,
+          isTrialActive: secondsRemaining > 0 && data.isTrialActive,
+          secondsRemaining,
+          chatEnabled: !data.chatDisabled && secondsRemaining > 0,
+          balanceRequired: secondsRemaining <= 0,
+        },
+      };
+    } catch (error: any) {
+      console.error('[ChatTrial] Error getting status:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  /**
+   * Disable chat when trial expires
+   */
+  async disableChatForExpiredTrial(sessionId: string): Promise<any> {
+    try {
+      const trialRef = doc(db, 'chat_trials', sessionId);
+      await updateDoc(trialRef, {
+        isTrialActive: false,
+        chatEnabled: false,
+        updatedAt: Timestamp.now(),
+      });
+
+      // Also update chat_sessions
+      const sessionRef = doc(db, 'chat_sessions', sessionId);
+      await updateDoc(sessionRef, {
+        trialExpired: true,
+        chatDisabled: true,
+        disabledAt: Timestamp.now(),
+      });
+
+      console.log('[ChatTrial] Chat disabled for expired trial:', sessionId);
+
+      return { success: true, message: 'Chat disabled. Add balance to continue.' };
+    } catch (error: any) {
+      console.error('[ChatTrial] Error disabling chat:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  /**
+   * Re-enable chat when user adds balance
+   */
+  async enableChatAfterBalance(sessionId: string): Promise<any> {
+    try {
+      // Update trial status
+      const trialRef = doc(db, 'chat_trials', sessionId);
+      await updateDoc(trialRef, {
+        trialEnded: true,
+        paidChatStarted: true,
+        paidChatStartedAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      });
+
+      // Re-enable chat session
+      const sessionRef = doc(db, 'chat_sessions', sessionId);
+      await updateDoc(sessionRef, {
+        trialExpired: false,
+        chatDisabled: false,
+        paidChatStarted: true,
+        enabledAt: Timestamp.now(),
+      });
+
+      console.log('[ChatTrial] Chat enabled after balance added:', sessionId);
+
+      return { success: true, message: '✅ Chat enabled! You can continue messaging now.' };
+    } catch (error: any) {
+      console.error('[ChatTrial] Error enabling chat:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  /**
+   * Check if user can send message in this session
+   */
+  async canSendMessage(sessionId: string, userId: string, userBalance: number): Promise<any> {
+    try {
+      const trialRef = doc(db, 'chat_trials', sessionId);
+      const trialSnap = await getDoc(trialRef);
+
+      let allowed = false;
+      let reason = '';
+
+      if (!trialSnap.exists()) {
+        // No trial, check balance
+        if (userBalance > 0) {
+          allowed = true;
+          reason = 'Balance available';
+        } else {
+          allowed = false;
+          reason = 'Insufficient balance';
+        }
+      } else {
+        const data = trialSnap.data();
+        const now = Timestamp.now();
+        const trialEnd = data.trialEndTime as Timestamp;
+        const secondsRemaining = Math.max(0, trialEnd.seconds - now.seconds);
+
+        // Trial is active
+        if (secondsRemaining > 0 && data.isTrialActive) {
+          allowed = true;
+          reason = `Free trial: ${secondsRemaining}s remaining`;
+        } else if (userBalance > 0) {
+          // Trial expired but balance available
+          allowed = true;
+          reason = 'Paid chat enabled';
+        } else {
+          allowed = false;
+          reason = 'Free trial ended. Add balance to continue.';
+        }
+      }
+
+      return { success: true, allowed, reason };
+    } catch (error: any) {
+      console.error('[ChatTrial] Error checking message permission:', error);
+      return { success: false, allowed: false, reason: 'Error checking chat status' };
+    }
+  },
+
+  /**
+   * Subscribe to trial status changes
+   */
+  subscribeToTrialStatus(sessionId: string, callback: (data: any) => void): (() => void) | null {
+    try {
+      const trialRef = doc(db, 'chat_trials', sessionId);
+
+      const unsubscribe = onSnapshot(trialRef, (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          const now = Timestamp.now();
+          const trialEnd = data.trialEndTime as Timestamp;
+          const secondsRemaining = Math.max(0, trialEnd.seconds - now.seconds);
+
+          callback({
+            sessionId,
+            userId: data.userId,
+            expertId: data.expertId,
+            isTrialActive: secondsRemaining > 0 && data.isTrialActive,
+            secondsRemaining,
+            chatEnabled: !data.chatDisabled && secondsRemaining > 0,
+            balanceRequired: secondsRemaining <= 0,
+          });
+        }
+      });
+
+      return unsubscribe;
+    } catch (error: any) {
+      console.error('[ChatTrial] Error subscribing to trial status:', error);
+      return null;
+    }
+  },
+};
+

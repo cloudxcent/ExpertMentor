@@ -1,12 +1,60 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Allow authenticated users to read any profile (for avatars, names, etc)
-    // Allow users to update only their own profile
+    // Helper function to check ownership
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    // Helper function to check if chat is enabled for session
+    function isChatEnabled(sessionId) {
+      let session = get(/databases/$(database)/documents/chat_sessions/$(sessionId));
+      return !session.data.chatDisabled && !session.data.trialExpired;
+    }
+
+    // Helper function to check if user has balance
+    function hasBalance() {
+      let wallet = get(/databases/$(database)/documents/wallet_balance/$(request.auth.uid));
+      return wallet.data.balance > 0;
+    }
+
+    // Profiles - allow authenticated users to read, only owner can write
     match /profiles/{userId} {
       allow read: if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == userId;
-      allow update: if request.auth != null && request.auth.uid == userId;
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId);
+      allow delete: if false;
+    }
+
+    // User Preferences - only owner can read/write
+    match /user_preferences/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId);
+      allow delete: if isOwner(userId);
+    }
+
+    // User Cache - only owner can read/write
+    match /user_cache/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId);
+      allow delete: if isOwner(userId);
+    }
+
+    // Wallet Balance - only owner can read/write
+    match /wallet_balance/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId);
+      allow delete: if false;
+    }
+
+    // Chat Trials - track 60-second free trial status
+    match /chat_trials/{sessionId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+      allow update: if request.auth != null;
       allow delete: if false;
     }
 
@@ -27,15 +75,19 @@ service cloud.firestore {
     }
 
     // Chat sessions - allow both users in the session to read/write
+    // With restrictions based on free trial status and balance
     match /chat_sessions/{sessionId} {
       allow read: if request.auth != null;
       allow create: if request.auth != null;
       allow update: if request.auth != null;
 
-      // Messages within chat sessions
+      // Messages within chat sessions - enforce chat restrictions
       match /messages/{messageId} {
         allow read: if request.auth != null;
-        allow create: if request.auth != null && request.resource.data.senderId == request.auth.uid;
+        allow create: if request.auth != null && 
+                       request.resource.data.senderId == request.auth.uid &&
+                       // Allow if chat is enabled (not disabled by trial expiry)
+                       !get(/databases/$(database)/documents/chat_sessions/$(sessionId)).data.chatDisabled;
         allow update: if request.auth != null;
       }
     }
@@ -50,9 +102,17 @@ service cloud.firestore {
 
     // Notifications - allow users to read their own notifications
     match /notifications/{notificationId} {
-      allow read: if request.auth != null;
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
       allow create: if request.auth != null;
-      allow update: if request.auth != null;
+      allow update: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    // Transactions - allow users to read their own transactions
+    match /transactions/{transactionId} {
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null;
+      allow update: if false;
+      allow delete: if false;
     }
 
     // Account Deletion Requests - for 48-hour verification period

@@ -6,7 +6,6 @@ import { Audio, Video as ExpoVideo } from 'expo-av';
 import { voipService, AGORA_APP_ID } from '../../utils/voipService';
 import { callSignaling, CallSession, CallStatus } from '../../utils/callSignaling';
 import { auth } from '../../config/firebase';
-import { storage, StorageKeys } from '../../utils/storage';
 
 const { width, height } = Dimensions.get('window');
 
@@ -82,17 +81,9 @@ export default function CallScreen() {
 
       currentUserIdRef.current = user.uid;
       
-      // Get actual user name from storage profile
+      // Get actual user name from Firebase Auth
       let userName = user.displayName || 'User';
-      try {
-        const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-        if (profileData?.name) {
-          userName = profileData.name;
-          console.log('[CallScreen] Got user name from profile:', userName);
-        }
-      } catch (err) {
-        console.log('[CallScreen] Could not fetch profile name, using Firebase displayName');
-      }
+      console.log('[CallScreen] Using user name:', userName);
       
       currentUserNameRef.current = userName;
 

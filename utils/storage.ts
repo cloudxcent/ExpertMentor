@@ -118,4 +118,76 @@ export const storage = {
       throw error;
     }
   },
+
+  /**
+   * Security audit: Check for any sensitive data that shouldn't be stored
+   * This is a development helper to prevent accidental storage of secrets
+   */
+  async auditStoredData(): Promise<{
+    safe: boolean;
+    warnings: string[];
+    storedKeys: string[];
+  }> {
+    const warnings: string[] = [];
+    const storedKeys: string[] = [];
+
+    // Sensitive patterns that should never be stored
+    const forbiddenPatterns = [
+      'password',
+      'secret',
+      'token',
+      'api_key',
+      'apikey',
+      'credit_card',
+      'cvv',
+      'ssn',
+      'private_key',
+      'private-key',
+      'authorization',
+      'bearer',
+      'otp',
+      'pin',
+    ];
+
+    try {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key) {
+            storedKeys.push(key);
+            const value = localStorage.getItem(key) || '';
+
+            // Check key name
+            for (const pattern of forbiddenPatterns) {
+              if (key.toLowerCase().includes(pattern)) {
+                warnings.push(
+                  `⚠️ Potentially sensitive key name: "${key}" contains "${pattern}"`
+                );
+              }
+            }
+
+            // Check value content (basic check)
+            if (value.length < 500) {
+              // Only check small values to avoid performance issues
+              for (const pattern of forbiddenPatterns) {
+                if (value.toLowerCase().includes(pattern)) {
+                  warnings.push(
+                    `⚠️ Potentially sensitive data in "${key}" - contains "${pattern}"`
+                  );
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[Storage] Error during audit:', error);
+    }
+
+    return {
+      safe: warnings.length === 0,
+      warnings,
+      storedKeys,
+    };
+  },
 };

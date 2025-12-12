@@ -3,9 +3,8 @@ import { View, Text, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Ima
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Star, Clock, MessageCircle, Phone, Video, Heart, Share, MapPin, Award, Users, Copy, Mail, User } from 'lucide-react-native';
-import { db } from '../../config/firebase';
+import { db, auth } from '../../config/firebase';
 import { doc, getDoc } from 'firebase/firestore';
-import { storage, StorageKeys } from '../../utils/storage';
 import { api } from '../../utils/api';
 import ReviewModal from '../../components/ReviewModal';
 
@@ -58,9 +57,9 @@ export default function ExpertDetailScreen() {
     try {
       setIsLoading(true);
       
-      // Get current user ID
-      const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-      const currentUserId = profileData?.id;
+      // Get current user ID from Firebase Auth
+      const currentUser = auth.currentUser;
+      const currentUserId = currentUser?.uid;
       
       // Prevent users from viewing their own profile as an expert
       if (currentUserId === expertId) {

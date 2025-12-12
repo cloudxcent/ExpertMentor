@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Redirect } from 'expo-router';
 import { View, StyleSheet, ActivityIndicator } from 'react-native';
-import { storage, StorageKeys } from '../utils/storage';
-import { auth } from '../config/firebase';
+import { auth, db } from '../config/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 
 export default function IndexScreen() {
   const [redirectTo, setRedirectTo] = useState<string | null>(null);
@@ -29,10 +29,12 @@ export default function IndexScreen() {
           return;
         }
 
-        const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-        console.log('[Index] Profile data exists:', !!profileData);
+        // Check if profile exists in Firestore
+        const profileRef = doc(db, 'profiles', user.uid);
+        const profileSnap = await getDoc(profileRef);
+        console.log('[Index] Profile exists in Firestore:', profileSnap.exists());
 
-        if (profileData) {
+        if (profileSnap.exists()) {
           console.log('[Index] ✓ User authenticated + profile, redirecting to tabs');
           setRedirectTo('/(tabs)');
         } else {

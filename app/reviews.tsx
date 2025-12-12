@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Image, ActivityIndicator } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Star, User } from 'lucide-react-native';
-import { storage, StorageKeys } from '../utils/storage';
+import { auth } from '../config/firebase';
 import { api } from '../utils/api';
 
 interface Review {
@@ -34,10 +34,10 @@ export default function ReviewsScreen() {
       const targetExpertId = expertId as string;
       if (!targetExpertId) {
         // Otherwise load reviews for current user
-        const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-        if (!profileData?.id) return;
+        const currentUser = auth.currentUser;
+        if (!currentUser) return;
         
-        const userReviews = await api.getUserReviews(profileData.id);
+        const userReviews = await api.getUserReviews(currentUser.uid);
         setReviews(userReviews);
         
         if (userReviews.length > 0) {

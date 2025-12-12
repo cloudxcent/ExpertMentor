@@ -3,7 +3,8 @@ import { View, Text, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView } fr
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { ArrowLeft, Gift, Star, Zap, Users, DollarSign, Clock } from 'lucide-react-native';
-import { storage, StorageKeys } from '../utils/storage';
+import { auth, db } from '../config/firebase';
+import { doc, getDoc } from 'firebase/firestore';
 
 interface Offer {
   id: string;
@@ -23,9 +24,18 @@ export default function OffersScreen() {
   }, []);
 
   const loadUserProfile = async () => {
-    const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-    if (profileData) {
-      setUserType(profileData.userType);
+    try {
+      const currentUser = auth.currentUser;
+      if (!currentUser) return;
+
+      const profileRef = doc(db, 'profiles', currentUser.uid);
+      const profileSnap = await getDoc(profileRef);
+      if (profileSnap.exists()) {
+        const profile = profileSnap.data();
+        setUserType(profile.userType || 'client');
+      }
+    } catch (error) {
+      console.error('[Offers] Error loading profile:', error);
     }
   };
 

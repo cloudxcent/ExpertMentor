@@ -15,7 +15,6 @@ import { router } from 'expo-router';
 import { ArrowLeft, CreditCard, Plus, Wallet, CheckCircle } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { auth } from '../config/firebase';
-import { storage, StorageKeys } from '../utils/storage';
 import { useWallet } from '../utils/useWallet';
 import { formatCurrency } from '../utils/pricing';
 

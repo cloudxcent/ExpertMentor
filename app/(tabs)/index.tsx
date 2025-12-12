@@ -3,9 +3,8 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet, SafeAreaView, Ima
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { Bell, Star, Clock, Phone, MessageCircle, TrendingUp, Search, Zap, DollarSign, Award, Users, Shield, Lock, Eye, Newspaper, Gift } from 'lucide-react-native';
-import { storage, StorageKeys } from '../../utils/storage';
-import { db } from '../../config/firebase';
-import { collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
+import { db, auth } from '../../config/firebase';
+import { collection, query, where, getDocs, onSnapshot, doc, getDoc } from 'firebase/firestore';
 
 interface UserProfile {
   id: string;
@@ -64,9 +63,38 @@ export default function HomeScreen() {
 
   const loadUserProfile = async () => {
     try {
-      const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-      if (profileData) {
-        setUserProfile(profileData);
+      const currentUser = auth.currentUser;
+      if (currentUser) {
+        // Fetch user profile from Firestore
+        const profileRef = doc(db, 'profiles', currentUser.uid);
+        const profileSnap = await getDoc(profileRef);
+        
+        if (profileSnap.exists()) {
+          const profileData = profileSnap.data();
+          setUserProfile({
+            id: currentUser.uid,
+            name: profileData.name || currentUser.displayName || '',
+            email: currentUser.email || '',
+            userType: profileData.userType || 'client',
+            bio: profileData.bio,
+            experience: profileData.experience,
+            expertise: profileData.expertise,
+            chatRate: profileData.chatRate,
+            callRate: profileData.callRate,
+            totalSessions: profileData.totalSessions,
+            averageRating: profileData.averageRating,
+          });
+          console.log('[Home] ✓ User profile loaded from Firestore:', profileData.name);
+        } else {
+          // Fallback to Firebase Auth if profile doesn't exist yet
+          setUserProfile({
+            id: currentUser.uid,
+            name: currentUser.displayName || '',
+            email: currentUser.email || '',
+            userType: 'client',
+          });
+          console.log('[Home] Profile not found in Firestore, using Firebase Auth data');
+        }
       }
     } catch (error) {
       console.log('Error loading profile:', error);
@@ -77,8 +105,8 @@ export default function HomeScreen() {
 
   const loadExperts = async () => {
     try {
-      const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-      const currentUserId = profileData?.id;
+      const currentUser = auth.currentUser;
+      const currentUserId = currentUser?.uid;
       console.log('[Home] Loading experts from Firestore, excluding current user:', currentUserId);
 
       const profilesRef = collection(db, 'profiles');

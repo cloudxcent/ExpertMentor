@@ -6,7 +6,6 @@ import { Mail, ArrowRight, Loader, Phone } from 'lucide-react-native';
 import { auth, db } from '../../config/firebase';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signInWithPhoneNumber, PhoneAuthProvider, signInWithCredential, RecaptchaVerifier } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { storage, StorageKeys } from '../../utils/storage';
 import { signInWithGoogle, handleGoogleAuthSuccess } from '../../utils/googleAuth';
 
 type AuthMethod = 'initial' | 'email' | 'phone' | 'otp';
@@ -89,16 +88,31 @@ export default function LoginScreen() {
       const result = await signInWithGoogle();
 
       if (result.success && result.user) {
-        console.log('[Login] Google auth successful, handling profile...');
-        // Determine user type - for now, default to client, can be changed in profile
-        const authResult = await handleGoogleAuthSuccess(result.user, 'client');
+        console.log('[Login] Google auth successful, checking profile...');
+        const userId = result.user.uid;
+        
+        // Check if profile already exists in Firestore
+        const profileRef = doc(db, 'profiles', userId);
+        const profileSnap = await getDoc(profileRef);
 
-        if (authResult.success) {
-          console.log('[Login] User profile created/updated, navigating to user-type-selection');
-          router.replace('/(auth)/user-type-selection');
+        if (profileSnap.exists()) {
+          // Profile exists, user has completed setup - go directly to tabs
+          console.log('[Login] Existing profile found, navigating to tabs');
+          const profile = profileSnap.data();
+          console.log('[Login] Profile data from Firestore:', profile);
+          router.replace('/(tabs)');
         } else {
-          setError(authResult.error || 'Failed to create user profile');
-          console.error('[Login] Profile creation failed:', authResult.error);
+          // Profile doesn't exist, create initial one and go to user-type-selection
+          console.log('[Login] No profile found, creating initial profile...');
+          const authResult = await handleGoogleAuthSuccess(result.user, 'client');
+
+          if (authResult.success) {
+            console.log('[Login] Initial profile created, navigating to user-type-selection');
+            router.replace('/(auth)/user-type-selection');
+          } else {
+            setError(authResult.error || 'Failed to create user profile');
+            console.error('[Login] Profile creation failed:', authResult.error);
+          }
         }
       } else {
         setError(result.error || 'Google Sign-In failed');
@@ -122,8 +136,9 @@ export default function LoginScreen() {
       if (profileSnap.exists()) {
         console.log('[Login] Profile found, navigating to tabs');
         const profile = profileSnap.data();
-        await storage.setItem(StorageKeys.USER_PROFILE, { id: userId, email: userEmail, ...profile });
-        await storage.setItem(StorageKeys.IS_LOGGED_IN, true);
+        console.log('[Login] Profile data from Firestore:', profile);
+        // Data will be retrieved via real-time listeners in appInitialization.ts
+        // No need to store in localStorage - Firestore handles everything
         router.replace('/(tabs)');
       } else {
         console.log('[Login] Profile not found, navigating to user-type-selection');
@@ -135,7 +150,7 @@ export default function LoginScreen() {
         router.replace('/(auth)/user-type-selection');
       }
     } catch (err) {
-      console.error('Profile check error:', err);
+      console.error('[Login] Profile check error:', err);
       router.replace('/(auth)/user-type-selection');
     }
   };

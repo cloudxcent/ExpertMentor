@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Ima
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { ChevronLeft, MessageCircle, Phone, Plus, Wallet, Settings, Bell, Clock, Award, DollarSign, Users, Gift, TrendingUp, Zap } from 'lucide-react-native';
-import { storage, StorageKeys } from '../utils/storage';
+import { auth } from '../config/firebase';
 
 interface UserProfile {
   userType: 'expert' | 'client';
@@ -30,9 +30,12 @@ export default function QuickActionsScreen() {
 
   const loadUserProfile = async () => {
     try {
-      const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-      if (profileData) {
-        setUserProfile(profileData);
+      const currentUser = auth.currentUser;
+      if (currentUser) {
+        setUserProfile({
+          userType: 'client',
+          name: currentUser.displayName || 'User',
+        });
       }
     } catch (error) {
       console.log('Error loading profile:', error);

@@ -3,8 +3,7 @@ import { View, Text, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Ima
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { User, Settings, Wallet, Star, MessageCircle, Phone, TrendingUp, Bell, CircleHelp as HelpCircle, LogOut, CreditCard as Edit, Award, Clock, DollarSign, Zap, CreditCard, Gift } from 'lucide-react-native';
-import { storage, StorageKeys } from '../../utils/storage';
-import { db } from '../../config/firebase';
+import { db, auth } from '../../config/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { useAuth } from '../../components/AuthWrapper';
 import { api } from '../../utils/api';
@@ -47,48 +46,43 @@ export default function ProfileScreen() {
 
   const loadRealTimeStats = async () => {
     try {
-      const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-      if (!profileData?.id) return;
+      const currentUser = auth.currentUser;
+      if (!currentUser) return;
 
       // Get wallet balance
-      const walletBalance = await api.getWalletBalance(profileData.id);
+      const walletBalance = await api.getWalletBalance(currentUser.uid);
       
       // Get session count
-      const sessionCount = await api.getUserSessionCount(profileData.id);
+      const sessionCount = await api.getUserSessionCount(currentUser.uid);
       
       // Get expert rating if user is expert
       let rating = 0;
       let reviews = 0;
-      if (profileData.userType === 'expert') {
-        const ratingData = await api.getExpertRating(profileData.id);
-        rating = ratingData.averageRating;
-        reviews = ratingData.totalReviews;
 
-        // Subscribe to real-time rating updates
-        api.subscribeToExpertRating(profileData.id, (ratingData) => {
-          setStats(prev => ({
-            ...prev,
-            rating: ratingData.averageRating,
-            reviews: ratingData.totalReviews,
-          }));
-        });
+      // Subscribe to real-time rating updates
+      api.subscribeToExpertRating(currentUser.uid, (ratingData) => {
+        setStats(prev => ({
+          ...prev,
+          rating: ratingData.averageRating,
+          reviews: ratingData.totalReviews,
+        }));
+      });
 
-        // Subscribe to real-time wallet updates
-        api.subscribeToWalletBalance(profileData.id, (balance) => {
-          setStats(prev => ({
-            ...prev,
-            walletBalance: balance,
-          }));
-        });
+      // Subscribe to real-time wallet updates
+      api.subscribeToWalletBalance(currentUser.uid, (balance) => {
+        setStats(prev => ({
+          ...prev,
+          walletBalance: balance,
+        }));
+      });
 
-        // Subscribe to real-time session updates
-        api.subscribeToUserSessionCount(profileData.id, (count) => {
-          setStats(prev => ({
-            ...prev,
-            totalSessions: count,
-          }));
-        });
-      }
+      // Subscribe to real-time session updates
+      api.subscribeToUserSessionCount(currentUser.uid, (count) => {
+        setStats(prev => ({
+          ...prev,
+          totalSessions: count,
+        }));
+      });
 
       setStats(prev => ({
         ...prev,
@@ -104,35 +98,32 @@ export default function ProfileScreen() {
 
   const loadUserProfile = async () => {
     try {
-      const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-      if (profileData) {
-        try {
-          // Try to fetch updated profile from Firestore
-          const profileRef = doc(db, 'profiles', profileData.id);
-          const docSnap = await getDoc(profileRef);
+      const currentUser = auth.currentUser;
+      if (!currentUser) return;
 
-          if (docSnap.exists()) {
-            const data = docSnap.data();
-            const updatedProfile = {
-              ...profileData,
-              name: data.name || profileData.name,
-              bio: data.bio || profileData.bio,
-              avatarUrl: data.avatarUrl || profileData.avatarUrl,
-              chatRate: String(data.chatRate || profileData.chatRate || '0'),
-              callRate: String(data.callRate || profileData.callRate || '0'),
-              totalSessions: data.totalSessions || 0,
-              averageRating: data.averageRating || 0,
-            };
-            setUserProfile(updatedProfile);
-            await storage.setItem(StorageKeys.USER_PROFILE, updatedProfile);
-          } else {
-            setUserProfile(profileData);
-          }
-        } catch (err) {
-          // Firestore error, just use cached profile
-          console.log('Error fetching profile from Firestore:', err);
-          setUserProfile(profileData);
+      try {
+        // Fetch updated profile from Firestore
+        const profileRef = doc(db, 'profiles', currentUser.uid);
+        const docSnap = await getDoc(profileRef);
+
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          const userProfile = {
+            name: data.name || '',
+            bio: data.bio || '',
+            avatarUrl: data.avatarUrl,
+            experience: String(data.experience || ''),
+            expertise: data.expertise || '',
+            chatRate: String(data.chatRate || '0'),
+            callRate: String(data.callRate || '0'),
+            userType: data.userType || 'client',
+            totalSessions: data.totalSessions || 0,
+            averageRating: data.averageRating || 0,
+          };
+          setUserProfile(userProfile);
         }
+      } catch (err) {
+        console.log('Error fetching profile from Firestore:', err);
       }
     } catch (error) {
       console.log('Error loading profile:', error);

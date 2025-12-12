@@ -2,9 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, SafeAreaView, Image, Alert, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import { ArrowLeft, Save, Camera } from 'lucide-react-native';
-import { storage, StorageKeys } from '../utils/storage';
 import { db, auth } from '../config/firebase';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import * as ImagePicker from 'expo-image-picker';
 
 interface UserProfile {
@@ -34,6 +33,7 @@ export default function ProfileEditScreen() {
   const [chatRate, setChatRate] = useState('');
   const [callRate, setCallRate] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState('');
   const [uploading, setUploading] = useState(false);
 
@@ -43,15 +43,23 @@ export default function ProfileEditScreen() {
 
   const loadProfile = async () => {
     try {
-      // Get email from Firebase Auth
-      if (auth.currentUser?.email) {
-        console.log('[ProfileEdit] Email from Firebase Auth:', auth.currentUser.email);
-        setEmail(auth.currentUser.email);
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        console.log('[ProfileEdit] No authenticated user');
+        setIsLoading(false);
+        return;
       }
 
-      // Get profile data from local storage
-      const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-      if (profileData) {
+      // Get email from Firebase Auth
+      setEmail(currentUser.email || '');
+      console.log('[ProfileEdit] Email from Firebase Auth:', currentUser.email);
+
+      // Fetch complete profile data from Firestore
+      const profileRef = doc(db, 'profiles', currentUser.uid);
+      const profileSnap = await getDoc(profileRef);
+      
+      if (profileSnap.exists()) {
+        const profileData = profileSnap.data();
         setProfile(profileData);
         setName(profileData.name || '');
         setMobileNumber(profileData.mobileNumber || '');
@@ -62,9 +70,15 @@ export default function ProfileEditScreen() {
         setChatRate(profileData.chatRate?.toString() || '');
         setCallRate(profileData.callRate?.toString() || '');
         setAvatarUrl(profileData.avatarUrl || '');
+        console.log('[ProfileEdit] ✓ Profile loaded from Firestore:', profileData.name);
+      } else {
+        console.log('[ProfileEdit] Profile not found in Firestore yet');
+        setProfile(null);
       }
     } catch (error) {
       console.log('Error loading profile:', error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -203,24 +217,9 @@ export default function ProfileEditScreen() {
       
       console.log('[Profile] ✓ Firestore updated');
 
-      // Update local storage
-      const updatedProfileData = {
-        ...profile,
-        name: name.trim(),
-        bio: bio.trim(),
-        mobileNumber: mobileNumber.trim(),
-        avatarUrl: avatarUrl,
-        ...(profile.userType === 'expert' && {
-          expertise: expertise.trim(),
-          experience: experience.trim(),
-          industry: industry.trim(),
-          chatRate: parseFloat(chatRate),
-          callRate: parseFloat(callRate),
-        })
-      };
-
-      await storage.setItem(StorageKeys.USER_PROFILE, updatedProfileData);
-      console.log('[Profile] ✓ Local storage updated');
+      // Firestore automatically syncs via real-time listeners
+      // No need for manual local storage update
+      console.log('[Profile] ✓ Profile data will be synced via Firestore listeners');
 
       Alert.alert('Success', 'Profile updated successfully');
       router.back();

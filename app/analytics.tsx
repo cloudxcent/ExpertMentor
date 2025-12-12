@@ -3,8 +3,7 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet, SafeAreaView, Act
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { ArrowLeft, TrendingUp, Users, DollarSign, Star, Clock, Target, BarChart3, PieChart } from 'lucide-react-native';
-import { storage, StorageKeys } from '../utils/storage';
-import { db } from '../config/firebase';
+import { auth, db } from '../config/firebase';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 
 interface AnalyticsData {
@@ -31,16 +30,16 @@ export default function AnalyticsScreen() {
   const loadAnalytics = async () => {
     try {
       setIsLoading(true);
-      const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
       
-      if (!profileData?.id) {
-        console.warn('[Analytics] No user profile found');
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        console.warn('[Analytics] No authenticated user found');
         setIsLoading(false);
         return;
       }
 
       // Fetch profile data for basic stats
-      const profileRef = doc(db, 'profiles', profileData.id);
+      const profileRef = doc(db, 'profiles', currentUser.uid);
       const profileSnap = await getDoc(profileRef);
       
       if (!profileSnap.exists()) {
@@ -52,7 +51,7 @@ export default function AnalyticsScreen() {
       
       // Fetch all sessions for detailed analytics
       const sessionsRef = collection(db, 'sessions');
-      const sessionsQuery = query(sessionsRef, where('expertId', '==', profileData.id));
+      const sessionsQuery = query(sessionsRef, where('expertId', '==', currentUser.uid));
       const sessionsSnap = await getDocs(sessionsQuery);
       
       let totalSessions = 0;

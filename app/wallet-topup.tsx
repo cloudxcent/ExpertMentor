@@ -14,7 +14,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { ArrowLeft, Wallet, CreditCard, Smartphone, DollarSign } from 'lucide-react-native';
-import { createPaymentHandler } from '../../utils/paymentHandler';
+import { createPaymentHandler } from '../utils/paymentHandler';
 
 // Initialize payment handler with your credentials
 const paymentHandler = createPaymentHandler(

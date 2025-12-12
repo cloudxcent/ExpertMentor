@@ -4,7 +4,6 @@ import { Search, Filter, Star, Clock, Phone, MessageCircle } from 'lucide-react-
 import { router } from 'expo-router';
 import { db, auth } from '../../config/firebase';
 import { collection, query, where, orderBy, getDocs } from 'firebase/firestore';
-import { storage, StorageKeys } from '../../utils/storage';
 
 interface Expert {
   id: string;
@@ -102,13 +101,13 @@ export default function SearchScreen() {
     // Get current user ID first
     const getUserId = async () => {
       try {
-        const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-        if (profileData?.id) {
-          setCurrentUserId(profileData.id);
-          console.log('[Search] Current user ID:', profileData.id);
+        const currentUser = auth.currentUser;
+        if (currentUser) {
+          setCurrentUserId(currentUser.uid);
+          console.log('[Search] Current user ID:', currentUser.uid);
           
           // Clean up any self-referential expert entries
-          await cleanupSelfExpertEntries(profileData.id);
+          await cleanupSelfExpertEntries(currentUser.uid);
           
           // Load experts after cleanup
           loadExperts();
@@ -141,8 +140,8 @@ export default function SearchScreen() {
       // Get current user ID if not already set
       let userId = currentUserId;
       if (!userId) {
-        const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-        userId = profileData?.id;
+        const currentUser = auth.currentUser;
+        userId = currentUser?.uid;
       }
 
       console.log('[Search] Loading experts from Firestore, current user:', userId);

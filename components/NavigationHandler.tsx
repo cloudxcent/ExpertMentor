@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { useRouter, useSegments } from 'expo-router';
 import { useAuth } from './AuthWrapper';
-import { storage, StorageKeys } from '../utils/storage';
+import { db } from '../config/firebase';
+import { doc, getDoc } from 'firebase/firestore';
 
 /**
  * This component listens to auth state changes and handles navigation
@@ -29,8 +30,9 @@ export default function NavigationHandler() {
     // User is logged in, set up periodic check
     const checkProfile = async () => {
       try {
-        const profileData = await storage.getItem(StorageKeys.USER_PROFILE);
-        const exists = !!profileData;
+        const profileRef = doc(db, 'profiles', user.uid);
+        const profileSnap = await getDoc(profileRef);
+        const exists = profileSnap.exists();
         if (exists !== profileExists) {
           console.log('[NavigationHandler] Profile status changed: exists =', exists);
           setProfileExists(exists);

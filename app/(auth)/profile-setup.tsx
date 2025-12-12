@@ -5,7 +5,6 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { User, Briefcase, DollarSign, Tag, ArrowRight, MessageCircle, Phone } from 'lucide-react-native';
 import { auth, db } from '../../config/firebase';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
-import { storage, StorageKeys } from '../../utils/storage';
 
 interface ProfileData {
   name: string;
@@ -111,20 +110,8 @@ export default function ProfileSetupScreen() {
 
       console.log('[ProfileSetup] Profile saved successfully');
 
-      const profileData = {
-        id: user.uid,
-        name: formData.name,
-        bio: formData.bio,
-        email: user.email || '',
-        userType: formData.userType,
-        experience: formData.experience || null,
-        expertise: formData.expertise || null,
-        chatRate: formData.chatRate,
-        callRate: formData.callRate,
-      };
-
-      await storage.setItem(StorageKeys.USER_PROFILE, profileData);
-      await storage.setItem(StorageKeys.IS_LOGGED_IN, true);
+      // Data will be retrieved via real-time listeners in appInitialization.ts
+      // No need to store in localStorage - Firestore handles everything
 
       setIsLoading(false);
       router.replace('/(tabs)');
