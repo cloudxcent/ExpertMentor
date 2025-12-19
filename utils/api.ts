@@ -1649,5 +1649,126 @@ export const chatTrialApi = {
       return null;
     }
   },
+
+  subscribeToAnalytics(userId: string, callback: (data: any) => void): (() => void) | null {
+    try {
+      const profileRef = doc(db, 'profiles', userId);
+      let unsubscribeSessions: (() => void) | null = null;
+
+      const unsubscribeProfile = onSnapshot(profileRef, (profileSnap: any) => {
+        if (!profileSnap.exists()) return;
+
+        const profileData = profileSnap.data();
+        const userType = profileData.userType || 'client';
+
+        if (unsubscribeSessions) {
+          unsubscribeSessions();
+        }
+
+        const sessionsRef = collection(db, 'call_sessions');
+        const whereField = userType === 'expert' ? 'calleeId' : 'callerId';
+        const sessionsQuery = query(sessionsRef, where(whereField, '==', userId));
+
+        unsubscribeSessions = onSnapshot(sessionsQuery, (sessionsSnap: any) => {
+          let totalSessions = 0;
+          let totalEarnings = 0;
+          let totalSpent = 0;
+          let chatSessions = 0;
+          let callSessions = 0;
+          let videoCallSessions = 0;
+          let totalDuration = 0;
+          const ratings: number[] = [];
+          const sessionsByDay: Record<string, number> = {};
+
+          sessionsSnap.forEach((doc: any) => {
+            const session = doc.data();
+            if (session.status === 'ended' || session.status === 'completed') {
+              totalSessions++;
+              const cost = session.totalCost || 0;
+
+              if (userType === 'expert') {
+                totalEarnings += cost;
+              } else {
+                totalSpent += cost;
+              }
+
+              if (session.callType === 'audio') callSessions++;
+              else if (session.callType === 'video') videoCallSessions++;
+
+              if (session.duration) {
+                totalDuration += session.duration;
+                const dayKey = new Date(session.startTime?.toDate()).toLocaleDateString();
+                sessionsByDay[dayKey] = (sessionsByDay[dayKey] || 0) + cost;
+              }
+
+              if (session.rating) ratings.push(session.rating);
+            }
+          });
+
+          const averageRating = ratings.length > 0
+            ? parseFloat((ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1))
+            : 0;
+
+          const completionRate = sessionsSnap.size > 0
+            ? Math.round((totalSessions / sessionsSnap.size) * 100)
+            : 0;
+
+          const averageSessionDuration = totalSessions > 0
+            ? Math.round(totalDuration / totalSessions)
+            : 0;
+
+          const weeklyData: number[] = [];
+          for (let i = 6; i >= 0; i--) {
+            const date = new Date();
+            date.setDate(date.getDate() - i);
+            const dayKey = date.toLocaleDateString();
+            weeklyData.push(sessionsByDay[dayKey] ? Math.round(sessionsByDay[dayKey]) : 0);
+          }
+
+          const analyticsData: any = {
+            userType,
+            totalSessions,
+            averageRating,
+            totalReviews: ratings.length,
+            chatSessions,
+            callSessions: callSessions + videoCallSessions,
+            videoCallSessions,
+            completionRate,
+            averageSessionDuration,
+          };
+
+          if (userType === 'expert') {
+            analyticsData.totalEarnings = totalEarnings;
+            analyticsData.weeklyEarnings = weeklyData;
+            analyticsData.topCategory = profileData.expertise
+              ? Array.isArray(profileData.expertise)
+                ? profileData.expertise[0]
+                : profileData.expertise
+              : 'General';
+            analyticsData.isOnline = profileData.isOnline || false;
+          } else {
+            analyticsData.totalSpent = totalSpent;
+            analyticsData.weeklySpending = weeklyData;
+            analyticsData.walletBalance = profileData.walletBalance || 0;
+            analyticsData.topExpertise = profileData.expertise
+              ? Array.isArray(profileData.expertise)
+                ? profileData.expertise[0]
+                : profileData.expertise
+              : 'General';
+          }
+
+          callback(analyticsData);
+        });
+      });
+
+      return () => {
+        unsubscribeProfile();
+        if (unsubscribeSessions) unsubscribeSessions();
+      };
+    } catch (error: any) {
+      console.error('[Analytics] Error subscribing to analytics:', error);
+      return null;
+    }
+  },
 };
 

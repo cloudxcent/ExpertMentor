@@ -3,20 +3,26 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet, SafeAreaView, Act
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { ArrowLeft, TrendingUp, Users, DollarSign, Star, Clock, Target, BarChart3, PieChart } from 'lucide-react-native';
-import { auth, db } from '../config/firebase';
-import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { auth } from '../config/firebase';
+import { api } from '../utils/api';
 
 interface AnalyticsData {
-  totalEarnings: number;
+  userType?: 'expert' | 'client';
+  totalEarnings?: number;
+  totalSpent?: number;
   totalSessions: number;
   averageRating: number;
   totalReviews: number;
   chatSessions: number;
   callSessions: number;
+  videoCallSessions?: number;
   completionRate: number;
   averageSessionDuration: number;
-  weeklyEarnings: number[];
-  topCategory: string;
+  weeklyEarnings?: number[];
+  weeklySpending?: number[];
+  topCategory?: string;
+  walletBalance?: number;
+  isOnline?: boolean;
 }
 
 export default function AnalyticsScreen() {
@@ -24,98 +30,48 @@ export default function AnalyticsScreen() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    loadAnalytics();
-  }, []);
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      console.warn('[Analytics] No authenticated user found');
+      setIsLoading(false);
+      return;
+    }
 
-  const loadAnalytics = async () => {
+    // Set loading to false on first data update
+    let firstUpdate = true;
+
+    // Subscribe to real-time analytics
     try {
-      setIsLoading(true);
+      console.log('[Analytics] api object keys:', Object.keys(api));
+      console.log('[Analytics] subscribeToAnalytics exists?', typeof (api as any).subscribeToAnalytics);
       
-      const currentUser = auth.currentUser;
-      if (!currentUser) {
-        console.warn('[Analytics] No authenticated user found');
+      if (typeof (api as any).subscribeToAnalytics !== 'function') {
+        console.error('[Analytics] subscribeToAnalytics is not a function');
         setIsLoading(false);
         return;
       }
 
-      // Fetch profile data for basic stats
-      const profileRef = doc(db, 'profiles', currentUser.uid);
-      const profileSnap = await getDoc(profileRef);
-      
-      if (!profileSnap.exists()) {
-        setIsLoading(false);
-        return;
-      }
-
-      const profileInfo = profileSnap.data();
-      
-      // Fetch all sessions for detailed analytics
-      const sessionsRef = collection(db, 'sessions');
-      const sessionsQuery = query(sessionsRef, where('expertId', '==', currentUser.uid));
-      const sessionsSnap = await getDocs(sessionsQuery);
-      
-      let totalSessions = 0;
-      let totalEarnings = 0;
-      let chatSessions = 0;
-      let callSessions = 0;
-      let totalDuration = 0;
-      const ratings: number[] = [];
-
-      sessionsSnap.forEach((doc) => {
-        const session = doc.data();
-        if (session.status === 'completed') {
-          totalSessions++;
-          totalEarnings += session.cost || 0;
-          
-          if (session.type === 'chat') chatSessions++;
-          else if (session.type === 'call') callSessions++;
-          
-          if (session.duration) totalDuration += session.duration;
-          if (session.rating) ratings.push(session.rating);
+      const unsub = (api as any).subscribeToAnalytics(currentUser.uid, (data: any) => {
+        console.log('[Analytics] Received data:', data);
+        setAnalytics(data);
+        if (firstUpdate) {
+          setIsLoading(false);
+          firstUpdate = false;
         }
       });
 
-      const averageRating = ratings.length > 0 
-        ? (ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1)
-        : 0;
-
-      const completionRate = sessionsSnap.size > 0 
-        ? ((totalSessions / sessionsSnap.size) * 100).toFixed(0)
-        : 0;
-
-      const averageSessionDuration = totalSessions > 0 
-        ? Math.round(totalDuration / totalSessions)
-        : 0;
-
-      // Generate mock weekly earnings data
-      const weeklyEarnings = [
-        Math.round(totalEarnings * 0.12),
-        Math.round(totalEarnings * 0.15),
-        Math.round(totalEarnings * 0.18),
-        Math.round(totalEarnings * 0.16),
-        Math.round(totalEarnings * 0.20),
-        Math.round(totalEarnings * 0.14),
-        Math.round(totalEarnings * 0.05),
-      ];
-
-      setAnalytics({
-        totalEarnings,
-        totalSessions,
-        averageRating: parseFloat(String(averageRating)),
-        totalReviews: ratings.length,
-        chatSessions,
-        callSessions,
-        completionRate: parseInt(String(completionRate)),
-        averageSessionDuration,
-        weeklyEarnings,
-        topCategory: profileInfo.expertise || 'General'
-      });
+      // Cleanup subscription on component unmount
+      return () => {
+        if (unsub && typeof unsub === 'function') {
+          unsub();
+        }
+      };
     } catch (error) {
-      console.error('[Analytics] Error loading analytics:', error);
-    } finally {
+      console.error('[Analytics] Error in useEffect:', error);
       setIsLoading(false);
+      return;
     }
-  };
+  }, []);
 
   if (isLoading) {
     return (
@@ -150,13 +106,19 @@ export default function AnalyticsScreen() {
           <Text style={styles.sectionTitle}>Key Performance Indicators</Text>
           
           <View style={styles.metricsGrid}>
-            {/* Total Earnings */}
+            {/* Total Earnings / Spending */}
             <View style={styles.metricCard}>
               <View style={styles.metricIconContainer}>
                 <DollarSign size={24} color="#059669" />
               </View>
-              <Text style={styles.metricValue}>₹{analytics?.totalEarnings?.toLocaleString() || 0}</Text>
-              <Text style={styles.metricLabel}>Total Earnings</Text>
+              <Text style={styles.metricValue}>
+                ₹{analytics?.userType === 'expert' 
+                  ? (analytics?.totalEarnings || 0)?.toLocaleString() 
+                  : (analytics?.totalSpent || 0)?.toLocaleString()}
+              </Text>
+              <Text style={styles.metricLabel}>
+                {analytics?.userType === 'expert' ? 'Total Earnings' : 'Total Spent'}
+              </Text>
             </View>
 
             {/* Total Sessions */}
@@ -177,13 +139,19 @@ export default function AnalyticsScreen() {
               <Text style={styles.metricLabel}>Avg Rating</Text>
             </View>
 
-            {/* Total Reviews */}
+            {/* Total Reviews / Wallet Balance */}
             <View style={styles.metricCard}>
               <View style={styles.metricIconContainer}>
                 <Target size={24} color="#7C3AED" />
               </View>
-              <Text style={styles.metricValue}>{analytics?.totalReviews || 0}</Text>
-              <Text style={styles.metricLabel}>Reviews</Text>
+              <Text style={styles.metricValue}>
+                {analytics?.userType === 'expert' 
+                  ? analytics?.totalReviews || 0
+                  : `₹${(analytics?.walletBalance || 0)?.toLocaleString()}`}
+              </Text>
+              <Text style={styles.metricLabel}>
+                {analytics?.userType === 'expert' ? 'Reviews' : 'Wallet Balance'}
+              </Text>
             </View>
           </View>
         </View>
@@ -195,17 +163,35 @@ export default function AnalyticsScreen() {
           <View style={styles.breakdownContainer}>
             <View style={styles.breakdownItem}>
               <View style={styles.breakdownChart}>
-                <View style={[styles.chartSegment, { backgroundColor: '#2563EB', width: '40%' }]} />
-                <View style={[styles.chartSegment, { backgroundColor: '#059669', width: '60%' }]} />
+                <View 
+                  style={[
+                    styles.chartSegment, 
+                    { 
+                      backgroundColor: '#2563EB', 
+                      width: `${analytics?.callSessions ? (analytics.callSessions / (analytics.callSessions + (analytics?.chatSessions || 0)) * 100) : 0}%` 
+                    }
+                  ]} 
+                />
+                <View 
+                  style={[
+                    styles.chartSegment, 
+                    { 
+                      backgroundColor: '#059669', 
+                      width: `${analytics?.chatSessions ? (analytics.chatSessions / (analytics.callSessions + (analytics?.chatSessions || 0)) * 100) : 0}%` 
+                    }
+                  ]} 
+                />
               </View>
               <View style={styles.breakdownLegend}>
                 <View style={styles.legendItem}>
                   <View style={[styles.legendDot, { backgroundColor: '#2563EB' }]} />
-                  <Text style={styles.legendText}>Chat: {analytics?.chatSessions || 0}</Text>
+                  <Text style={styles.legendText}>
+                    {analytics?.userType === 'expert' ? 'Calls' : 'Video Calls'}: {analytics?.callSessions || 0}
+                  </Text>
                 </View>
                 <View style={styles.legendItem}>
                   <View style={[styles.legendDot, { backgroundColor: '#059669' }]} />
-                  <Text style={styles.legendText}>Call: {analytics?.callSessions || 0}</Text>
+                  <Text style={styles.legendText}>Audio: {analytics?.chatSessions || 0}</Text>
                 </View>
               </View>
             </View>
@@ -236,25 +222,42 @@ export default function AnalyticsScreen() {
             </View>
           </View>
 
-          <View style={styles.performanceCard}>
-            <View style={styles.performanceRow}>
-              <View style={styles.performanceLabel}>
-                <BarChart3 size={20} color="#F59E0B" />
-                <Text style={styles.performanceText}>Top Category</Text>
+          {analytics?.userType === 'expert' && (
+            <View style={styles.performanceCard}>
+              <View style={styles.performanceRow}>
+                <View style={styles.performanceLabel}>
+                  <BarChart3 size={20} color="#F59E0B" />
+                  <Text style={styles.performanceText}>Expertise</Text>
+                </View>
+                <Text style={styles.performanceValue}>{analytics?.topCategory}</Text>
               </View>
-              <Text style={styles.performanceValue}>{analytics?.topCategory}</Text>
             </View>
-          </View>
+          )}
+
+          {analytics?.userType === 'client' && (
+            <View style={styles.performanceCard}>
+              <View style={styles.performanceRow}>
+                <View style={styles.performanceLabel}>
+                  <BarChart3 size={20} color="#F59E0B" />
+                  <Text style={styles.performanceText}>Most Visited</Text>
+                </View>
+                <Text style={styles.performanceValue}>{analytics?.topCategory || 'General'}</Text>
+              </View>
+            </View>
+          )}
         </View>
 
-        {/* Weekly Earnings Chart */}
+        {/* Weekly Earnings / Spending Chart */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Weekly Earnings</Text>
+          <Text style={styles.sectionTitle}>
+            {analytics?.userType === 'expert' ? 'Weekly Earnings' : 'Weekly Spending'}
+          </Text>
           
           <View style={styles.chartContainer}>
             <View style={styles.weeklyChart}>
-              {analytics?.weeklyEarnings?.map((amount, index) => {
-                const maxAmount = Math.max(...(analytics?.weeklyEarnings || []));
+              {(analytics?.userType === 'expert' ? analytics?.weeklyEarnings : analytics?.weeklySpending)?.map((amount, index) => {
+                const data = analytics?.userType === 'expert' ? analytics?.weeklyEarnings : analytics?.weeklySpending;
+                const maxAmount = Math.max(...(data || []));
                 const height = maxAmount > 0 ? (amount / maxAmount) * 120 : 0;
                 const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
                 
@@ -277,15 +280,19 @@ export default function AnalyticsScreen() {
             onPress={() => router.push('/my-sessions')}
           >
             <Users size={20} color="#FFFFFF" />
-            <Text style={styles.actionButtonText}>View Sessions</Text>
+            <Text style={styles.actionButtonText}>
+              {analytics?.userType === 'expert' ? 'View Sessions' : 'Session History'}
+            </Text>
           </TouchableOpacity>
           
           <TouchableOpacity
             style={[styles.actionButton, { backgroundColor: '#059669' }]}
-            onPress={() => router.push('/wallet')}
+            onPress={() => router.push(analytics?.userType === 'expert' ? '/wallet' : '/wallet-topup')}
           >
             <DollarSign size={20} color="#FFFFFF" />
-            <Text style={styles.actionButtonText}>Withdraw Earnings</Text>
+            <Text style={styles.actionButtonText}>
+              {analytics?.userType === 'expert' ? 'Withdraw Earnings' : 'Top-up Wallet'}
+            </Text>
           </TouchableOpacity>
         </View>
 
