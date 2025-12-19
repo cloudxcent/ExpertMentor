@@ -85,9 +85,7 @@ service cloud.firestore {
       match /messages/{messageId} {
         allow read: if request.auth != null;
         allow create: if request.auth != null && 
-                       request.resource.data.senderId == request.auth.uid &&
-                       // Allow if chat is enabled (not disabled by trial expiry)
-                       !get(/databases/$(database)/documents/chat_sessions/$(sessionId)).data.chatDisabled;
+                       request.resource.data.senderId == request.auth.uid;
         allow update: if request.auth != null;
       }
     }

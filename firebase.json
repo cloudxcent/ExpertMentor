@@ -1,6 +1,25 @@
 {
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-functions-debug.log"
+      ]
+    }
+  ],
   "firestore": {
     "rules": "firestore.rules"
-  }
+  },
+  "storage": [
+    {
+      "bucket": "expertmentor-3c14.appspot.com",
+      "rules": "storage.rules"
+    }
+  ]
 }
+
 

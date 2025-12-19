@@ -83,70 +83,8 @@ export default function ProfileEditScreen() {
   };
 
   const pickImage = async () => {
-    if (!profile) {
-      Alert.alert('Error', 'Profile not found');
-      return;
-    }
-
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-
-    if (status !== 'granted') {
-      Alert.alert('Permission Required', 'Please allow access to your photo library');
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.6, // Reduced quality for smaller file size
-    });
-
-    if (!result.canceled && result.assets[0]) {
-      setUploading(true);
-      try {
-        const imageUri = result.assets[0].uri;
-        console.log('[Profile] 📡 Image selected:', imageUri);
-        
-        // For web compatibility, convert to base64 data URL
-        const response = await fetch(imageUri);
-        const blob = await response.blob();
-        
-        console.log('[Profile] Original blob size:', blob.size, 'bytes');
-        
-        // Create a promise-based FileReader
-        const base64String = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const result = reader.result as string;
-            resolve(result);
-          };
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
-        });
-        
-        console.log('[Profile] ✅ Image converted to base64');
-        console.log('[Profile] Base64 size:', base64String.length, 'characters');
-        
-        // Check if size is reasonable (should be < 500KB as base64)
-        if (base64String.length > 500000) {
-          Alert.alert('Image Too Large', 'Please choose a smaller image');
-          setUploading(false);
-          return;
-        }
-        
-        // Store the base64 data URL directly
-        setAvatarUrl(base64String);
-        
-        console.log('[Profile] 📋 Avatar ready to save');
-        
-      } catch (error: any) {
-        console.error('[Profile] ❌ Error processing image:', error);
-        Alert.alert('Error', 'Failed to process image');
-      } finally {
-        setUploading(false);
-      }
-    }
+    Alert.alert('Info', 'Image uploads are temporarily disabled. You can update your profile without an avatar.');
+    return;
   };
 
   const validateMobileNumber = (number: string): boolean => {

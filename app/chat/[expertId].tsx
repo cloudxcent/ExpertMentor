@@ -4,14 +4,11 @@ import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Send, Phone, Camera, MoreVertical, Wallet, Plus, Smile, ImagePlus, X } from 'lucide-react-native';
 import { db, auth } from '../../config/firebase';
 import { collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, getDoc, doc, setDoc, getDocs, updateDoc } from 'firebase/firestore';
-import { storage } from '../../config/firebase';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { ensureMediaUrl } from '../../utils/firebaseStorageUrl';
 import { createMessageNotification } from '../../utils/notifications';
 import { api } from '../../utils/api.firebase';
 import { formatCurrency } from '../../utils/pricing';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
 
 interface Message {
   id: string;
@@ -112,27 +109,30 @@ export default function ChatScreen() {
 
       const expertRef = doc(db, 'profiles', expert as string);
       const expertSnap = await getDoc(expertRef);
+      let resolvedChatRate = 5;
+      let resolvedCallRate = 5;
+
       if (expertSnap.exists()) {
         console.log('[Chat] ✓ Expert details loaded:', expertSnap.data().name);
         setExpertDetails(expertSnap.data());
         
         // Get expert's chat and call rates (stored as chatRate and callRate in profile, which are per-minute)
         const expertData = expertSnap.data();
-        const chatRate = expertData.chatRate ? parseFloat(expertData.chatRate) : (parseFloat(chatRate as string) || 5);
-        const callRate = expertData.callRate ? parseFloat(expertData.callRate) : (chatRate || 5);
-        setChatRatePerMinute(chatRate);
-        setCallRatePerMinute(callRate);
+        resolvedChatRate = expertData.chatRate ? parseFloat(expertData.chatRate) : (parseFloat(chatRate as string) || 5);
+        resolvedCallRate = expertData.callRate ? parseFloat(expertData.callRate) : resolvedChatRate;
+        setChatRatePerMinute(resolvedChatRate);
+        setCallRatePerMinute(resolvedCallRate);
         setIsRateLoaded(true);
-        console.log('[Chat] ✓ Chat rate per minute set to:', chatRate, 'Call rate per minute set to:', callRate, 'from expert profile');
+        console.log('[Chat] ✓ Chat rate per minute set to:', resolvedChatRate, 'Call rate per minute set to:', resolvedCallRate, 'from expert profile');
       } else {
         console.warn('[Chat] ⚠ Expert profile not found in database');
         // Use passed chatRate or default
-        const chatRate = parseFloat(chatRate as string) || 5;
-        const callRate = chatRate;
-        setChatRatePerMinute(chatRate);
-        setCallRatePerMinute(callRate);
+        resolvedChatRate = parseFloat(chatRate as string) || 5;
+        resolvedCallRate = resolvedChatRate;
+        setChatRatePerMinute(resolvedChatRate);
+        setCallRatePerMinute(resolvedCallRate);
         setIsRateLoaded(true);
-        console.log('[Chat] ✓ Chat rate per minute set to:', chatRate, 'Call rate per minute set to:', callRate, 'from params');
+        console.log('[Chat] ✓ Chat rate per minute set to:', resolvedChatRate, 'Call rate per minute set to:', resolvedCallRate, 'from params');
       }
 
       const chatSessionId = [currentUser.uid, expert].sort().join('_');
@@ -163,15 +163,21 @@ export default function ChatScreen() {
         setPayerId(existingPayerId);
         
         if (currentUser.uid === existingPayerId) {
-          // Current user is the payer - enable billing
-          setIsChatActive(true);
-          setSessionStartTime(Date.now());
-          setDeductedAmount(0);
-          console.log('[Chat] ✅ Chat enabled for payer');
+          // Current user is the payer - check balance
+          if (userBalance >= chatRatePerMinute) {
+            // Payer has sufficient balance
+            setIsChatActive(true);
+            setSessionStartTime(Date.now());
+            setDeductedAmount(0);
+            console.log('[Chat] ✅ Chat enabled for payer with sufficient balance');
+          } else {
+            // Payer needs to add balance
+            console.log('[Chat] ⚠ Payer needs to add balance. Current:', userBalance, 'Required:', chatRatePerMinute);
+          }
         } else {
           // Current user is the receiver - no billing needed, chat enabled by default
           setIsChatActive(true);
-          console.log('[Chat] ✅ Chat auto-enabled for receiver (other party joins free)');
+          console.log('[Chat] ✅ Chat auto-enabled for receiver (expert - joins free)');
         }
       }
 
@@ -233,13 +239,14 @@ export default function ChatScreen() {
   // Set up real-time message listener
   useEffect(() => {
     if (!sessionId || !currentUserId) {
+      console.log('[Chat] 🚫 Listener setup skipped - sessionId:', sessionId, 'currentUserId:', currentUserId);
       return;
     }
 
     // Reset scroll flag when setting up listener
     hasScrolledRef.current = false;
 
-    console.log('[Chat] 📡 Setting up listener for session:', sessionId);
+    console.log('[Chat] 📡 Setting up listener for session:', sessionId, 'current user:', currentUserId);
 
     const messagesRef = collection(db, 'chat_sessions', sessionId, 'messages');
     const q = query(messagesRef, orderBy('timestamp', 'asc'));
@@ -247,7 +254,7 @@ export default function ChatScreen() {
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        console.log('[Chat] 📨 Listener snapshot:', snapshot.size, 'documents');
+        console.log('[Chat] 📨 Listener snapshot received:', snapshot.size, 'documents for session:', sessionId);
         const loadedMessages: Message[] = [];
 
         snapshot.forEach((doc) => {
@@ -267,7 +274,7 @@ export default function ChatScreen() {
         });
 
         setMessages(loadedMessages);
-        console.log('[Chat] ✓ Messages state updated:', loadedMessages.length);
+        console.log('[Chat] ✓ Messages state updated with', loadedMessages.length, 'messages');
 
         // Delay scroll to ensure messages are rendered
         setTimeout(() => {
@@ -286,7 +293,7 @@ export default function ChatScreen() {
     unsubscribeRef.current = unsubscribe;
 
     return () => {
-      console.log('[Chat] 🔌 Unsubscribing listener');
+      console.log('[Chat] 🔌 Unsubscribing listener for session:', sessionId);
       unsubscribe();
     };
   }, [sessionId, currentUserId]);
@@ -303,10 +310,13 @@ export default function ChatScreen() {
             setUserBalance(balance);
             console.log('[Chat] ✓ Balance refreshed on screen focus:', balance);
             
-            // If user added balance, mark it and hide modal
-            if (balance > 0) {
+            // If user added balance, enable chat immediately
+            if (balance >= chatRatePerMinute && !isChatActive) {
               setHasAddedBalance(true);
               setShowBalanceModal(false);
+              setIsChatActive(true);
+              setSessionStartTime(Date.now());
+              setDeductedAmount(0);
               console.log('[Chat] ✓ User added balance, auto-enabling chat');
             }
           }
@@ -316,7 +326,7 @@ export default function ChatScreen() {
       };
 
       refreshBalance();
-    }, [])
+    }, [isChatActive, chatRatePerMinute])
   );
 
   // Auto-deduct balance per minute ONLY from payer, not receiver
@@ -377,7 +387,7 @@ export default function ChatScreen() {
   // Auto-show balance modal ONLY if current user is the payer AND has insufficient balance
   // Other party (receiver) joins free
   useEffect(() => {
-    if (isRateLoaded && isLoading === false && payerId) {
+    if (isRateLoaded && isLoading === false && payerId && currentUserId) {
       const isCurrentUserPayer = payerId === currentUserId;
       
       if (isCurrentUserPayer && !hasAddedBalance) {
@@ -410,70 +420,8 @@ export default function ChatScreen() {
   }, [isRateLoaded, userBalance, chatRatePerMinute, isLoading, hasAddedBalance, payerId, currentUserId]);
 
   const pickImage = async () => {
-    try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      
-      if (status !== 'granted') {
-        console.error('[Chat] Permission denied');
-        alert('Permission to access media library is required');
-        return;
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.7,
-        base64: true, // Get base64 directly from picker
-      });
-
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        const asset = result.assets[0];
-        console.log('[Chat] 📸 Image selected');
-        
-        try {
-          let base64String = asset.base64;
-          
-          // If base64 not available from picker, read from file system
-          if (!base64String) {
-            console.log('[Chat] Reading image from file system...');
-            base64String = await FileSystem.readAsStringAsync(asset.uri, {
-              encoding: FileSystem.EncodingType.Base64,
-            });
-          }
-
-          if (!base64String) {
-            throw new Error('Failed to get base64 from image');
-          }
-
-          console.log('[Chat] 📤 Uploading image to Firebase Storage...');
-          
-          // Convert base64 to blob and upload to Firebase Storage
-          const filename = `chat/${sessionId}/${currentUserId}_${Date.now()}.jpg`;
-          const storageRef = ref(storage, filename);
-          
-          // Convert base64 string to blob
-          const binaryString = atob(base64String);
-          const bytes = new Uint8Array(binaryString.length);
-          for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-          }
-          const blob = new Blob([bytes], { type: 'image/jpeg' });
-          
-          // Upload to Firebase Storage
-          await uploadBytes(storageRef, blob);
-          const downloadURL = await getDownloadURL(storageRef);
-          
-          console.log('[Chat] ✅ Image uploaded to Firebase Storage. URL:', downloadURL);
-          setSelectedImage(downloadURL); // Store Firebase Storage URL
-        } catch (error) {
-          console.error('[Chat] Error uploading image to Firebase:', error);
-          alert('Failed to upload image to Firebase. Please try again.');
-        }
-      }
-    } catch (error) {
-      console.error('[Chat] Error picking image:', error);
-    }
+    alert('Image uploads are temporarily disabled. Please use text messages.');
+    return;
   };
 
   const insertEmoji = (emoji: string) => {
@@ -617,12 +565,23 @@ export default function ChatScreen() {
           alert(`Image saved as ${fileName}`);
         } else {
           // For mobile, save to local file system
-          const fileUri = `${FileSystem.documentDirectory}${fileName}`;
-          await FileSystem.writeAsStringAsync(fileUri, base64, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
-          console.log('[Chat] Image saved to:', fileUri);
-          alert(`Image saved to Downloads`);
+          try {
+            const docDir = (FileSystem as any).documentDirectory;
+            if (docDir) {
+              const fileUri = `${docDir}${fileName}`;
+              await FileSystem.writeAsStringAsync(fileUri, base64, {
+                encoding: 'base64' as any,
+              });
+              console.log('[Chat] Image saved to:', fileUri);
+              alert(`Image saved to Downloads`);
+            } else {
+              console.warn('[Chat] Document directory not available on this platform');
+              alert('Cannot save to file system on this platform');
+            }
+          } catch (fsError) {
+            console.warn('[Chat] Could not save to file system:', fsError);
+            alert('Could not save image to file system');
+          }
         }
       };
       reader.readAsDataURL(blob);
@@ -683,8 +642,8 @@ export default function ChatScreen() {
     router.push({
       pathname: '/call/[expertId]',
       params: {
-        expertId,
-        expertName,
+        expertId: Array.isArray(expertId) ? expertId[0] : expertId,
+        expertName: Array.isArray(expertName) ? expertName[0] : expertName,
         callType: 'video',
         callRate: callRatePerMinute.toString()
       }
@@ -800,6 +759,8 @@ export default function ChatScreen() {
           ) : (
             messages.map((message, index) => {
               const isSender = message.senderId === currentUserId;
+              const safeImageUrl = message.imageUrl ? ensureMediaUrl(message.imageUrl) : null;
+              
               return (
                 <View
                   key={message.id || index}
@@ -808,16 +769,24 @@ export default function ChatScreen() {
                     isSender ? styles.userMessage : styles.expertMessage
                   ]}
                 >
-                  {message.imageUrl && (
+                  {safeImageUrl && (
                     <TouchableOpacity 
                       style={styles.imageWrapper}
-                      onPress={() => openImageViewer(message.imageUrl || '')}
+                      onPress={() => openImageViewer(safeImageUrl)}
                     >
                       <Image
-                        source={{ uri: message.imageUrl }}
+                        source={{ uri: safeImageUrl }}
                         style={styles.messageImage}
                         resizeMode="cover"
-                        onError={(e) => console.log('[Chat] Image load error:', e.nativeEvent.error)}
+                        onError={(e) => {
+                          console.log('[Chat] ❌ Image load error for URL:', safeImageUrl, 'Error:', e.nativeEvent.error);
+                        }}
+                        onLoadStart={() => {
+                          console.log('[Chat] 📸 Loading image:', safeImageUrl);
+                        }}
+                        onLoad={() => {
+                          console.log('[Chat] ✅ Image loaded successfully');
+                        }}
                       />
                     </TouchableOpacity>
                   )}
@@ -1342,14 +1311,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter-Regular',
     color: '#1F2937',
     textAlignVertical: 'center',
-  },
-  iconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#F3F4F6',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   sendButton: {
     width: 40,
