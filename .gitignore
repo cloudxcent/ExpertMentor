@@ -31,5 +31,9 @@ yarn-error.*
 .env*.local
 .env
 
+# firebase credentials
+firebase-credentials.json
+firebase-setup.js
+
 # typescript
 *.tsbuildinfo
